@@ -13,6 +13,42 @@ pragma solidity ^0.8.23;
 ///      project to sit on extension id 0, the SYSTEM extension, owned by Flare governance. A third
 ///      party can never satisfy it. Running our OWN extension is permissionless, so that is the path.
 interface IFlareTeeManager {
+    /// @notice One instruction sent to our TEE machines.
+    /// @param opType    Operation family. MUST NOT be a system opType (those are reserved for
+    ///                  extension 0), so Keyless defines its own.
+    /// @param opCommand The specific command within the opType.
+    /// @param message   Opaque payload. WE define this format, because we also write the enclave
+    ///                  that reads it. Keyless encodes an XrplPayment here.
+    /// @param cosigners Addresses that must co-sign the TEE response, if the wallet requires it.
+    /// @param cosignersThreshold How many of them are required.
+    /// @param claimBackAddress Where unspent instruction fees are returned.
+    struct TeeInstructionParams {
+        bytes32 opType;
+        bytes32 opCommand;
+        bytes message;
+        address[] cosigners;
+        uint64 cosignersThreshold;
+        address claimBackAddress;
+    }
+
+    // --- Instructions -----------------------------------------------------
+
+    /// @notice Instruct this extension's TEE machines. THE HEART OF KEYLESS.
+    /// @dev Access control (InstructionsFacet), for a non-system caller:
+    ///        require(msg.sender == ExtensionManager.getExtensionInstructionsSender(extensionId));
+    ///      The policy contract is that sender. So the enclave holding the XRPL key takes orders
+    ///      from the policy and from nothing else — not from the operator, not from us.
+    function sendInstructions(address[] calldata _teeIds, TeeInstructionParams calldata _instructionParams)
+        external
+        payable
+        returns (bytes32 _instructionId);
+
+    /// @notice Fee that must be attached to sendInstructions for this op across these machines.
+    function calculateFeeByTeeIds(bytes32 _opType, bytes32 _opCommand, address[] calldata _teeIds)
+        external
+        view
+        returns (uint256);
+
     // --- ExtensionManager -------------------------------------------------
 
     /// @notice Register a new TEE extension. PERMISSIONLESS — msg.sender becomes the extension owner.

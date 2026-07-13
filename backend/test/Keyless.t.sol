@@ -6,25 +6,36 @@ import {KeylessDemoPolicy} from "../src/policies/KeylessDemoPolicy.sol";
 import {KeylessRedemptionPolicy} from "../src/policies/KeylessRedemptionPolicy.sol";
 import {AuthorizedPayPolicy} from "../src/AuthorizedPayPolicy.sol";
 import {IAssetManager, RedemptionRequestInfo} from "../src/interfaces/IAssetManager.sol";
-import {ITeePayments} from "../src/interfaces/ITeePayments.sol";
-import {MockTeePayments, MockAssetManager} from "./Mocks.sol";
+import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
+import {MockFlareTeeManager, MockAssetManager} from "./Mocks.sol";
 
 contract KeylessTest is Test {
-    MockTeePayments pmw;
+    MockFlareTeeManager tee;
     MockAssetManager am;
 
-    bytes32 constant SOURCE_XRP = keccak256("testXRP");
+    uint256 constant EXT_ID = 454; // our live extension on Coston2
+    bytes32 constant WALLET_ID = bytes32("wallet-1");
     string constant XRPL_ACCOUNT = "rKEYLESSaccountXXXXXXXXXXXXXXXXXXXX";
     string constant REDEEMER = "rREDEEMERaddressYYYYYYYYYYYYYYYYYYY";
     string constant OPERATOR_WALLET = "rOPERATORgreedXXXXXXXXXXXXXXXXXXXXX";
     address constant CLAIMBACK = address(0xC1a1);
 
+    uint256 constant FEE = 1000;
+
     address operator = makeAddr("operator");
     address anyone = makeAddr("anyone");
 
     function setUp() public {
-        pmw = new MockTeePayments();
+        tee = new MockFlareTeeManager();
         am = new MockAssetManager();
+
+        address[] memory machines = new address[](1);
+        machines[0] = makeAddr("teeMachine");
+        tee.setMachines(machines);
+
+        vm.deal(operator, 1 ether);
+        vm.deal(anyone, 1 ether);
+        vm.deal(address(this), 1 ether);
     }
 
     // ---------------------------------------------------------------
@@ -33,39 +44,45 @@ contract KeylessTest is Test {
 
     function _deployDemo() internal returns (KeylessDemoPolicy p) {
         p = new KeylessDemoPolicy(
-            ITeePayments(address(pmw)), SOURCE_XRP, XRPL_ACCOUNT, CLAIMBACK, "", 100
+            IFlareTeeManager(address(tee)), EXT_ID, WALLET_ID, XRPL_ACCOUNT, CLAIMBACK
         );
-        // Simulate PMW binding this policy as the account's authorization address.
-        pmw.setAuthorization(address(p));
+        // Simulate Flare binding this policy as the extension's instructions sender.
+        tee.setInstructionsSender(address(p));
     }
 
     function test_demo_paysAllowlistedRecipient() public {
         KeylessDemoPolicy p = _deployDemo();
         p.allowRecipient(REDEEMER);
 
-        uint64 id = p.pay(REDEEMER, 1_000_000, bytes32("ref1"));
+        bytes32 id = p.pay{value: FEE}(REDEEMER, 1_000_000, bytes32("ref1"));
 
-        assertEq(id, 1);
-        assertEq(pmw.lastRecipient(), REDEEMER);
-        assertEq(pmw.lastAmount(), 1_000_000);
+        assertEq(id, bytes32(uint256(1)));
+        assertEq(tee.lastRecipient(), REDEEMER);
+        assertEq(tee.lastAmount(), 1_000_000);
+        assertEq(tee.lastWalletId(), WALLET_ID, "must instruct the right wallet");
+        assertEq(tee.lastOpType(), p.OP_TYPE(), "must not use a system opType");
     }
 
-    /// @notice THE DEMO BEAT: the operator holds every key and still cannot pay themselves.
+    /// @notice THE DEMO BEAT: the operator holds every key on the box and still cannot pay themselves.
+    ///         The instruction is never even sent — the enclave never sees a payment to sign.
     function test_demo_operatorCannotPaySelf() public {
         KeylessDemoPolicy p = _deployDemo();
         p.allowRecipient(REDEEMER); // only the legitimate destination is allowed
 
-        // Operator tries to drain to their own XRPL wallet.
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AuthorizedPayPolicy.PolicyRejected.selector, "recipient not allowlisted"));
-        p.pay(OPERATOR_WALLET, 999_000_000, bytes32("steal"));
+        vm.expectRevert(
+            abi.encodeWithSelector(AuthorizedPayPolicy.PolicyRejected.selector, "recipient not allowlisted")
+        );
+        p.pay{value: FEE}(OPERATOR_WALLET, 999_000_000, bytes32("steal"));
+
+        assertEq(tee.instructionCount(), 0, "no instruction may reach the enclave");
     }
 
     function test_demo_rejectsZeroAmount() public {
         KeylessDemoPolicy p = _deployDemo();
         p.allowRecipient(REDEEMER);
         vm.expectRevert(abi.encodeWithSelector(AuthorizedPayPolicy.PolicyRejected.selector, "zero amount"));
-        p.pay(REDEEMER, 0, bytes32("ref"));
+        p.pay{value: FEE}(REDEEMER, 0, bytes32("ref"));
     }
 
     function test_demo_onlyOwnerManagesAllowlist() public {
@@ -75,14 +92,22 @@ contract KeylessTest is Test {
         p.allowRecipient(REDEEMER);
     }
 
-    function test_demo_unboundPolicyCannotPay() public {
-        // Deploy but DON'T bind as authorization address.
+    /// @notice Until Flare binds this contract as the instructions sender, the enclave ignores it.
+    function test_demo_unboundPolicyCannotInstruct() public {
         KeylessDemoPolicy p = new KeylessDemoPolicy(
-            ITeePayments(address(pmw)), SOURCE_XRP, XRPL_ACCOUNT, CLAIMBACK, "", 100
+            IFlareTeeManager(address(tee)), EXT_ID, WALLET_ID, XRPL_ACCOUNT, CLAIMBACK
         );
         p.allowRecipient(REDEEMER);
         assertFalse(p.isBound());
-        vm.expectRevert("OnlyAuthorizationAddress");
+
+        vm.expectRevert("OnlyInstructionsSender");
+        p.pay{value: FEE}(REDEEMER, 1000, bytes32("ref"));
+    }
+
+    function test_demo_revertsWithoutFee() public {
+        KeylessDemoPolicy p = _deployDemo();
+        p.allowRecipient(REDEEMER);
+        vm.expectRevert(abi.encodeWithSelector(AuthorizedPayPolicy.InsufficientFee.selector, FEE, 0));
         p.pay(REDEEMER, 1000, bytes32("ref"));
     }
 
@@ -92,15 +117,14 @@ contract KeylessTest is Test {
 
     function _deployRedemption() internal returns (KeylessRedemptionPolicy p) {
         p = new KeylessRedemptionPolicy(
-            ITeePayments(address(pmw)),
-            SOURCE_XRP,
+            IFlareTeeManager(address(tee)),
+            EXT_ID,
+            WALLET_ID,
             XRPL_ACCOUNT,
             CLAIMBACK,
-            IAssetManager(address(am)),
-            "",
-            100
+            IAssetManager(address(am))
         );
-        pmw.setAuthorization(address(p));
+        tee.setInstructionsSender(address(p));
     }
 
     function _sampleRedemption(uint256 id) internal view returns (RedemptionRequestInfo.Data memory r) {
@@ -119,24 +143,42 @@ contract KeylessTest is Test {
         KeylessRedemptionPolicy p = _deployRedemption();
         am.setRedemption(7, _sampleRedemption(7));
 
-        vm.prank(anyone); // permissionless: anyone may trigger, params are forced from protocol state
-        uint64 id = p.payRedemption(7);
+        vm.prank(anyone); // permissionless: params are forced from protocol state
+        bytes32 id = p.payRedemption{value: FEE}(7);
 
-        assertEq(id, 1);
-        assertEq(pmw.lastRecipient(), REDEEMER, "recipient must be redeemer's address");
-        assertEq(pmw.lastAmount(), 4_900_000, "amount must be valueUBA - feeUBA");
-        assertEq(pmw.lastReference(), bytes32("redref"), "memo must be paymentReference");
+        assertEq(id, bytes32(uint256(1)));
+        assertEq(tee.lastRecipient(), REDEEMER, "recipient must be redeemer's address");
+        assertEq(tee.lastAmount(), 4_900_000, "amount must be valueUBA - feeUBA");
+        assertEq(tee.lastReference(), bytes32("redref"), "memo must be paymentReference");
     }
 
-    /// @notice Free replay guard: once confirmed, the AssetManager read reverts, so re-payment is impossible.
-    function test_redemption_cannotReplayAfterConfirm() public {
+    /// @notice THE DOUBLE-PAY GUARD. The AssetManager only reverts once the payment is CONFIRMED,
+    ///         which is minutes away. Until then the request is still ACTIVE — so without an
+    ///         explicit guard, a permissionless payRedemption could drain the agent by re-authorizing
+    ///         the same payout. Here the request is still perfectly ACTIVE and it still reverts.
+    function test_redemption_cannotDoublePayWhileStillActive() public {
         KeylessRedemptionPolicy p = _deployRedemption();
         am.setRedemption(7, _sampleRedemption(7));
-        p.payRedemption(7);
 
-        am.confirmAndDelete(7); // real protocol deletes the request on confirmation
-        vm.expectRevert("invalid redemption request");
-        p.payRedemption(7);
+        p.payRedemption{value: FEE}(7);
+        assertEq(tee.instructionCount(), 1);
+
+        vm.prank(anyone);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRedemptionPolicy.RedemptionAlreadyPaid.selector, 7));
+        p.payRedemption{value: FEE}(7);
+
+        assertEq(tee.instructionCount(), 1, "enclave must not be told to pay twice");
+    }
+
+    /// @notice Belt and braces: once confirmed, the AssetManager read reverts on its own.
+    function test_redemption_cannotReplayAfterConfirm() public {
+        KeylessRedemptionPolicy p = _deployRedemption();
+        am.setRedemption(8, _sampleRedemption(8));
+        p.payRedemption{value: FEE}(8);
+
+        am.confirmAndDelete(8); // real protocol deletes the request on confirmation
+        vm.expectRevert(abi.encodeWithSelector(KeylessRedemptionPolicy.RedemptionAlreadyPaid.selector, 8));
+        p.payRedemption{value: FEE}(8);
     }
 
     function test_redemption_rejectsDefaulted() public {
@@ -146,15 +188,24 @@ contract KeylessTest is Test {
         am.setRedemption(9, r);
 
         vm.expectRevert(abi.encodeWithSelector(KeylessRedemptionPolicy.RedemptionNotActive.selector, 9));
-        p.payRedemption(9);
+        p.payRedemption{value: FEE}(9);
     }
 
-    /// @notice The flagship's version of the adversary beat: there is simply no function that pays
-    ///         anyone but the redeemer. The operator cannot supply a destination at all.
-    function test_redemption_noOperatorControlledDestination() public view {
-        // Compile-time property, asserted by inspection: KeylessRedemptionPolicy exposes only
-        // payRedemption(uint256). Every payment parameter is read from AssetManager state.
-        // This test documents the invariant; there is no call that could pay an arbitrary address.
-        assert(true);
+    /// @notice The flagship's adversary beat: there is no function that pays anyone but the redeemer.
+    ///         The operator cannot supply a destination at all — payRedemption(uint256) is the entire
+    ///         external surface, and every field is read from the AssetManager.
+    function test_redemption_operatorCannotChooseDestination() public {
+        KeylessRedemptionPolicy p = _deployRedemption();
+        am.setRedemption(11, _sampleRedemption(11));
+
+        // The operator's only lever is *which* redemption to pay. Not who gets paid.
+        vm.prank(operator);
+        p.payRedemption{value: FEE}(11);
+
+        assertEq(tee.lastRecipient(), REDEEMER, "operator cannot redirect the payout");
+        assertTrue(
+            keccak256(bytes(tee.lastRecipient())) != keccak256(bytes(OPERATOR_WALLET)),
+            "operator address is unreachable by construction"
+        );
     }
 }

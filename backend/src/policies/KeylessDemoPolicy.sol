@@ -2,39 +2,40 @@
 pragma solidity ^0.8.23;
 
 import {AuthorizedPayPolicy} from "../AuthorizedPayPolicy.sol";
-import {ITeePayments} from "../interfaces/ITeePayments.sol";
-import {PMWTypes} from "../interfaces/PMWTypes.sol";
+import {IFlareTeeManager} from "../interfaces/IFlareTeeManager.sol";
 
 /// @title KeylessDemoPolicy
-/// @notice A minimal policy you can drive END TO END TODAY — real XRP moving on XRPL testnet
-///         through the same PMW pay() path as the flagship, with NO FAssets agent status required.
+/// @notice A minimal policy you can drive END TO END TODAY — real XRP moving on XRPL testnet, signed
+///         inside the enclave, through the same instruction path as the flagship, with NO FAssets
+///         agent status required.
 ///
-/// @dev Why this exists: KeylessRedemptionPolicy only goes live once you're whitelisted as an
-///      agent (governance-gated). To show real money moving in the demo without waiting on that,
-///      this policy permits payments only to an owner-curated allowlist of XRPL destinations.
+/// @dev Why this exists: KeylessRedemptionPolicy only goes live once the enclave's XRPL account is
+///      registered as an FAssets agent's underlying address, which is governance-gated. To show real
+///      money moving without waiting on that, this policy permits payments only to an owner-curated
+///      allowlist of XRPL destinations.
 ///
 ///      This is what powers the "watch me try to cheat and fail" demo beat:
-///        - Owner pre-approves a legitimate destination, pays it → succeeds, real XRP moves.
-///        - Operator (holding every key) tries to pay their OWN address → _checkPolicy reverts,
-///          because it isn't on the allowlist. The audience can read the four lines that make it
-///          impossible.
+///        - Owner allowlists a legitimate destination, pays it → the enclave signs, real XRP moves.
+///        - Operator (holding every key on the box, root on the machine) tries to pay their OWN
+///          address → _checkPolicy reverts. No instruction is ever sent, so the enclave never sees
+///          a payment to sign. The audience can read the two lines that make it impossible.
 ///
-///      The allowlist is a stand-in for "a policy"; the point being demonstrated is that the
-///      account can ONLY do what the contract permits, regardless of who runs the machine.
+///      Note there is no reissue()/retry entrypoint that takes caller-supplied payment details. Any
+///      such function would be a hole straight through the policy — a way to hand the enclave a
+///      destination that `_checkPolicy` never saw. Retries belong to the enclave, which re-derives
+///      every field from the instruction this contract already authorized.
 contract KeylessDemoPolicy is AuthorizedPayPolicy {
     address public owner;
 
-    /// @notice XRPL destination string => allowed.
+    /// @notice keccak(XRPL destination string) => allowed.
     mapping(bytes32 => bool) public allowedRecipient;
-
-    bytes internal xrpTokenId;
-    uint256 public immutable maxFee;
 
     event RecipientAllowed(string recipient);
     event RecipientRemoved(string recipient);
     event OwnerChanged(address indexed newOwner);
 
     error NotOwner();
+    error ZeroAddress();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -42,19 +43,17 @@ contract KeylessDemoPolicy is AuthorizedPayPolicy {
     }
 
     constructor(
-        ITeePayments _teePayments,
-        bytes32 _sourceId,
-        string memory _accountAddress,
-        address _claimBackAddress,
-        bytes memory _xrpTokenId,
-        uint256 _maxFee
-    ) AuthorizedPayPolicy(_teePayments, _sourceId, _accountAddress, _claimBackAddress) {
+        IFlareTeeManager _teeManager,
+        uint256 _extensionId,
+        bytes32 _walletId,
+        string memory _xrplAccount,
+        address _claimBackAddress
+    ) AuthorizedPayPolicy(_teeManager, _extensionId, _walletId, _xrplAccount, _claimBackAddress) {
         owner = msg.sender;
-        xrpTokenId = _xrpTokenId;
-        maxFee = _maxFee;
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
         owner = newOwner;
         emit OwnerChanged(newOwner);
     }
@@ -71,26 +70,21 @@ contract KeylessDemoPolicy is AuthorizedPayPolicy {
         emit RecipientRemoved(recipient);
     }
 
-    /// @notice Pay an allowlisted destination. Anyone may call — the allowlist is the gate, not msg.sender.
+    /// @notice Pay an allowlisted destination. Anyone may call — the allowlist is the gate, not
+    ///         msg.sender. Attach quotePayFee() to cover the TEE instruction fee.
     function pay(string calldata recipient, uint256 amount, bytes32 paymentReference)
         external
-        returns (uint64 paymentId)
+        payable
+        returns (bytes32 instructionId)
     {
-        paymentId = _authorizedPay(recipient, xrpTokenId, amount, maxFee, paymentReference);
+        instructionId = _authorizedPay(recipient, amount, paymentReference);
     }
 
-    /// @notice Reissue a stalled demo payment with bumped fees (owner only).
-    function reissue(
-        uint64 paymentId,
-        PMWTypes.PaymentInstruction[] calldata instructions,
-        PMWTypes.ReissueFeeParams calldata feeParams
-    ) external onlyOwner returns (bool finalized) {
-        finalized = _reissue(paymentId, instructions, feeParams);
-    }
-
-    /// @notice The policy: only allowlisted recipients, non-zero amount. Four lines. Read them.
+    /// @notice The policy. Two lines. Read them — this is the whole security argument.
     function _checkPolicy(string memory recipient, uint256 amount, bytes32) internal view override {
         if (amount == 0) revert PolicyRejected("zero amount");
-        if (!allowedRecipient[keccak256(bytes(recipient))]) revert PolicyRejected("recipient not allowlisted");
+        if (!allowedRecipient[keccak256(bytes(recipient))]) {
+            revert PolicyRejected("recipient not allowlisted");
+        }
     }
 }

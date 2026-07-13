@@ -1,79 +1,71 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
-import {ITeePayments} from "../src/interfaces/ITeePayments.sol";
-import {PMWTypes} from "../src/interfaces/PMWTypes.sol";
+import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
+import {AuthorizedPayPolicy} from "../src/AuthorizedPayPolicy.sol";
 import {IAssetManager, RedemptionRequestInfo} from "../src/interfaces/IAssetManager.sol";
 
-/// @notice Mock PMW payments contract. Records the last pay() so tests can assert what was authorized.
-contract MockTeePayments is ITeePayments {
-    uint64 public nextId = 1;
-    address public boundAuthorization;
+/// @notice Mock of Flare's TEE manager diamond. Records the last instruction so tests can assert
+///         exactly what the enclave would have been told to sign.
+contract MockFlareTeeManager {
+    uint256 public constant FEE = 1000;
 
-    // last-call capture
+    address public boundInstructionsSender;
+    address[] internal machines;
+    uint256 public nextId = 1;
+
+    // last-instruction capture, decoded from the message payload
     string public lastRecipient;
     uint256 public lastAmount;
     bytes32 public lastReference;
-    uint64 public lastPaymentId;
+    bytes32 public lastWalletId;
+    bytes32 public lastOpType;
+    uint256 public lastFeePaid;
+    uint256 public instructionCount;
 
-    /// @notice Simulate PMW having registered `who` as the account's authorization address.
-    function setAuthorization(address who) external {
-        boundAuthorization = who;
+    /// @notice Simulate Flare having registered `who` as the extension's instructions sender.
+    function setInstructionsSender(address who) external {
+        boundInstructionsSender = who;
     }
 
-    function pay(
-        PMWTypes.Account calldata,
-        PMWTypes.PaymentInstruction calldata _instruction,
-        address
-    ) external override returns (uint64 _paymentId) {
-        // PMW enforces OnlyAuthorizationAddress; mirror that here.
-        require(msg.sender == boundAuthorization, "OnlyAuthorizationAddress");
-        lastRecipient = _instruction.recipientAddress;
-        lastAmount = _instruction.amount;
-        lastReference = _instruction.paymentReference;
-        _paymentId = nextId++;
-        lastPaymentId = _paymentId;
+    /// @notice Simulate TEE machines joining the extension.
+    function setMachines(address[] calldata m) external {
+        machines = m;
     }
 
-    function reissue(
-        PMWTypes.Account calldata,
-        uint64,
-        PMWTypes.PaymentInstruction[] calldata,
-        PMWTypes.ReissueFeeParams calldata,
-        address
-    ) external view override returns (bool) {
-        require(msg.sender == boundAuthorization, "OnlyAuthorizationAddress");
-        return true;
+    function sendInstructions(
+        address[] calldata _teeIds,
+        IFlareTeeManager.TeeInstructionParams calldata _params
+    ) external payable returns (bytes32) {
+        // Flare's InstructionsFacet enforces this; mirror it so tests feel the real gate.
+        require(msg.sender == boundInstructionsSender, "OnlyInstructionsSender");
+        require(_teeIds.length > 0, "NoTeeMachinesSpecified");
+        require(msg.value >= FEE, "fee");
+
+        AuthorizedPayPolicy.XrplPayment memory p =
+            abi.decode(_params.message, (AuthorizedPayPolicy.XrplPayment));
+
+        lastWalletId = p.walletId;
+        lastRecipient = p.recipient;
+        lastAmount = p.amount;
+        lastReference = p.paymentReference;
+        lastOpType = _params.opType;
+        lastFeePaid = msg.value;
+        instructionCount++;
+
+        return bytes32(nextId++);
     }
 
-    function getAuthorizationAddress(PMWTypes.Account calldata)
-        external
-        view
-        override
-        returns (address)
-    {
-        return boundAuthorization;
+    function calculateFeeByTeeIds(bytes32, bytes32, address[] calldata) external pure returns (uint256) {
+        return FEE;
     }
 
-    function getInitialNonce(PMWTypes.Account calldata) external pure override returns (uint64) {
-        return 0;
+    function getActiveTeeMachines(uint256) external view returns (address[] memory) {
+        return machines;
     }
 
-    function getNextPaymentId(PMWTypes.Account calldata) external view override returns (uint64) {
-        return nextId;
-    }
-
-    function getPaymentFee(PMWTypes.Account calldata, bytes32) external pure override returns (uint256) {
-        return 0;
-    }
-
-    function getPaymentHash(PMWTypes.Account calldata, uint64 _paymentId)
-        external
-        pure
-        override
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(_paymentId));
+    function getTeeExtensionInstructionsSender(uint256) external view returns (address) {
+        return boundInstructionsSender;
     }
 }
 
