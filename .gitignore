@@ -2,7 +2,7 @@
 backend/out/
 backend/cache/
 backend/broadcast/
-backend/lib/forge-std/
+backend/lib/
 
 # Node
 frontend/node_modules/
@@ -11,6 +11,9 @@ frontend/dist/
 # Env / secrets
 **/.env
 !**/.env.example
+
+# Internal research & strategy notes — not published
+docs/
 
 # OS
 .DS_Store

@@ -3,7 +3,7 @@ pragma solidity ^0.8.23;
 
 /// @title RedemptionRequestInfo
 /// @notice Struct returned by IAssetManager.redemptionRequestInfo(). Copied verbatim from
-///         flare-labs-ltd/fassets @ contracts/userInterfaces/data/RedemptionRequestInfo.sol
+///         flare-labs-ltd/fassets, contracts/userInterfaces/data/RedemptionRequestInfo.sol,
 ///         so field order / types match the deployed AssetManager ABI exactly.
 library RedemptionRequestInfo {
     enum Status {

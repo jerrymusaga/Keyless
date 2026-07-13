@@ -5,7 +5,9 @@ libs = ["lib"]
 solc = "0.8.23"
 optimizer = true
 optimizer_runs = 200
-evm_version = "paris"
+# Flare's deployed contracts use PUSH0, so anything older than shanghai
+# breaks fork simulation with EvmError: NotActivated.
+evm_version = "shanghai"
 
 [fmt]
 line_length = 110
