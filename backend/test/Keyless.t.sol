@@ -78,6 +78,24 @@ contract KeylessTest is Test {
         assertEq(tee.instructionCount(), 0, "no instruction may reach the enclave");
     }
 
+    /// @notice A payment must be handed to EXACTLY ONE machine. Each machine that receives a PAY
+    ///         instruction independently signs and submits an XRPL transaction, so fanning out to
+    ///         every active machine would pay the recipient once per machine — a silent double-spend
+    ///         that scales with how decentralized the extension is.
+    function test_demo_paymentGoesToExactlyOneMachine() public {
+        address[] memory many = new address[](3);
+        many[0] = makeAddr("tee1");
+        many[1] = makeAddr("tee2");
+        many[2] = makeAddr("tee3");
+        tee.setMachines(many);
+
+        KeylessDemoPolicy p = _deployDemo();
+        p.allowRecipient(REDEEMER);
+        p.pay{value: FEE}(REDEEMER, 1_000_000, bytes32("ref"));
+
+        assertEq(tee.lastTeeIdCount(), 1, "payment must fan out to exactly one machine");
+    }
+
     function test_demo_rejectsZeroAmount() public {
         KeylessDemoPolicy p = _deployDemo();
         p.allowRecipient(REDEEMER);

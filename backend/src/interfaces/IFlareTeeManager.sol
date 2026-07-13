@@ -127,4 +127,14 @@ interface IFlareTeeManager {
 
     /// @notice Active TEE machines belonging to an extension. Empty until a machine reaches PRODUCTION.
     function getActiveTeeMachines(uint256 _extensionId) external view returns (address[] memory);
+
+    /// @notice Pick `_count` random active machines from an extension.
+    /// @dev Payments MUST go to exactly one machine. Each machine that receives a PAY instruction
+    ///      independently signs AND submits an XRPL transaction — instructing N machines would emit
+    ///      N duplicate payments. (Flare's own reference extension uses getRandomTeeIds(id, 1) for
+    ///      its SIGN command for the same reason.)
+    function getRandomTeeIds(uint256 _extensionId, uint256 _count)
+        external
+        view
+        returns (address[] memory);
 }

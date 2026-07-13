@@ -142,7 +142,9 @@ abstract contract AuthorizedPayPolicy {
     {
         _checkPolicy(recipient, amount, paymentReference);
 
-        address[] memory machines = teeManager.getActiveTeeMachines(extensionId);
+        // EXACTLY ONE machine. Every machine that receives a PAY instruction independently signs and
+        // submits an XRPL transaction, so instructing all of them would send the payment N times.
+        address[] memory machines = teeManager.getRandomTeeIds(extensionId, 1);
         if (machines.length == 0) revert NoTeeMachines();
 
         uint256 fee = teeManager.calculateFeeByTeeIds(OP_TYPE, OP_PAY, machines);

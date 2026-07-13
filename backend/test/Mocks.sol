@@ -22,6 +22,8 @@ contract MockFlareTeeManager {
     bytes32 public lastOpType;
     uint256 public lastFeePaid;
     uint256 public instructionCount;
+    /// @dev How many machines the last instruction fanned out to. Must be 1 for payments.
+    uint256 public lastTeeIdCount;
 
     /// @notice Simulate Flare having registered `who` as the extension's instructions sender.
     function setInstructionsSender(address who) external {
@@ -51,6 +53,7 @@ contract MockFlareTeeManager {
         lastReference = p.paymentReference;
         lastOpType = _params.opType;
         lastFeePaid = msg.value;
+        lastTeeIdCount = _teeIds.length;
         instructionCount++;
 
         return bytes32(nextId++);
@@ -62,6 +65,14 @@ contract MockFlareTeeManager {
 
     function getActiveTeeMachines(uint256) external view returns (address[] memory) {
         return machines;
+    }
+
+    /// @dev Payments go to exactly one machine; mirror that so tests catch a fan-out regression.
+    function getRandomTeeIds(uint256, uint256 _count) external view returns (address[] memory) {
+        uint256 n = _count < machines.length ? _count : machines.length;
+        address[] memory picked = new address[](n);
+        for (uint256 i = 0; i < n; i++) picked[i] = machines[i];
+        return picked;
     }
 
     function getTeeExtensionInstructionsSender(uint256) external view returns (address) {
