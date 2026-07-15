@@ -9,8 +9,18 @@ frontend/node_modules/
 frontend/dist/
 
 # Env / secrets
+# NOTE: .env.<chain> is where the funded deployer key goes (the enclave's scripts read it),
+# so ignore every .env variant, not just bare .env. Only the example is tracked.
 **/.env
+**/.env.*
 !**/.env.example
+
+# Enclave: proxy config holds indexer DB credentials
+enclave/config/proxy/*.toml
+!enclave/config/proxy/*.toml.example
+
+# Go build output
+enclave/go/bin/
 
 # Internal research & strategy notes — not published
 docs/
