@@ -57,7 +57,15 @@ abstract contract AuthorizedPayPolicy {
     bytes32 public constant OP_TYPE = bytes32("KEYLESS_XRP");
 
     /// @notice The only command this policy ever issues: sign and submit one XRPL payment.
-    bytes32 public constant OP_PAY = bytes32("PAY");
+    /// @dev MUST NOT be "PAY". Flare's tee-proxy switches on the opCommand ALONE (ignoring opType)
+    ///      when resolving an instruction's cosigners: `case op.Pay.Hash(), op.Reissue.Hash():` sends
+    ///      it down the PMW payment path, which tries to decode the message as Flare's own
+    ///      PaymentInstruction. Our XrplPayment has a different layout, so that decode fails
+    ///      ("reading cosigners: abi: cannot marshal into go array"), the vote box is never created,
+    ///      the instruction never reaches consensus, and the enclave never sees it. Any command name
+    ///      outside op.Command's reserved set (PAY, REISSUE, PROVE, KEY_*, TEE_*, *_POLICY, VRF)
+    ///      takes the generic `default:` branch and is delivered normally — which is how INIT works.
+    bytes32 public constant OP_PAY = bytes32("XRPSEND");
 
     /// @notice The payload handed to the enclave. We define this format because we also write the
     ///         enclave that reads it.

@@ -21,7 +21,13 @@ const (
 	OPCommandInit = "INIT"
 
 	// OPCommandPay makes the enclave sign and submit exactly one XRPL payment.
-	OPCommandPay = "PAY"
+	//
+	// Deliberately NOT "PAY". The tee-proxy resolves an instruction's cosigners by switching on the
+	// opCommand ALONE (ignoring opType): `case op.Pay.Hash(), op.Reissue.Hash():` routes it into
+	// Flare's PMW payment path, which decodes the message as Flare's PaymentInstruction. Ours is an
+	// XrplPayment with a different layout, so the decode fails, no vote box is created, and the
+	// instruction never reaches the enclave. Keep this outside op.Command's reserved set.
+	OPCommandPay = "XRPSEND"
 
 	TimeoutShutdown = 5 * time.Second
 )
