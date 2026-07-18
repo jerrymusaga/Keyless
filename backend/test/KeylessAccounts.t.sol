@@ -6,9 +6,11 @@ import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
+import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
-import {MockFlareTeeManager} from "./Mocks.sol";
+import {IWeb2Json} from "../src/interfaces/IFdc.sol";
+import {MockFlareTeeManager, MockFdcVerification} from "./Mocks.sol";
 
 contract KeylessAccountsTest is Test {
     MockFlareTeeManager tee;
@@ -193,5 +195,101 @@ contract KeylessAccountsTest is Test {
         vm.warp(block.timestamp + 31 days);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no active subscription"));
         accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("m4"));
+    }
+
+    // --- FDC escrow rule: pay when the world proves the condition -------------
+
+    /// @dev A Web2Json proof whose attested payload is `data`. merkleProof is empty — the mock verifier
+    ///      stands in for the real Merkle-root check, so only the payload matters here.
+    function _proof(bytes memory data) internal pure returns (IWeb2Json.Proof memory p) {
+        p.data.votingRound = 5830;
+        p.data.responseBody.abiEncodedData = data;
+    }
+
+    function _escrowWallet(FdcEscrowRule rule, bytes32 conditionHash) internal returns (bytes32 id) {
+        id = _wallet(alice, "escrow");
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, EXCHANGE, 10_000_000, conditionHash); // pay supplier up to 10 XRP on proof
+        vm.stopPrank();
+    }
+
+    function test_escrow_locksUntilConditionProven_thenPays() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
+        bytes memory delivered = abi.encode(true); // the attested "delivery == true" payload
+        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+
+        // before proof: even the escrow's own payee cannot be paid, and no instruction reaches the enclave
+        uint256 before = tee.instructionCount();
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("e"));
+        assertEq(tee.instructionCount(), before, "no instruction before the condition is proven");
+
+        // anyone submits the FDC proof of delivery; the proof is the trust, not the sender
+        vm.prank(bob);
+        rule.release(id, _proof(delivered));
+
+        // now the supplier can be paid, within the cap
+        accounts.pay{value: FEE}(id, EXCHANGE, 6_000_000, bytes32("e1"));
+        assertEq(tee.lastRecipient(), EXCHANGE);
+        assertEq(tee.lastAmount(), 6_000_000);
+        assertEq(tee.lastWalletId(), id);
+    }
+
+    function test_escrow_rejectsUnverifiedProof() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        fdc.setResult(false); // FDC says: not attested
+        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
+        bytes memory delivered = abi.encode(true);
+        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+
+        vm.expectRevert(FdcEscrowRule.ProofNotVerified.selector);
+        rule.release(id, _proof(delivered));
+    }
+
+    function test_escrow_rejectsWrongCondition() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
+        bytes32 id = _escrowWallet(rule, keccak256(abi.encode(true)));
+
+        // a verified proof, but of the wrong outcome (delivery == false) -> condition mismatch
+        vm.expectRevert(FdcEscrowRule.ConditionMismatch.selector);
+        rule.release(id, _proof(abi.encode(false)));
+    }
+
+    function test_escrow_enforcesPayeeAndCapAfterRelease() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
+        bytes memory delivered = abi.encode(true);
+        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+        rule.release(id, _proof(delivered));
+
+        // released funds still can't be redirected to the attacker
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient is not the escrow payee"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("x"));
+
+        // nor exceed the escrow cap across releases
+        accounts.pay{value: FEE}(id, EXCHANGE, 10_000_000, bytes32("e1"));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "over escrow cap"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 1, bytes32("e2"));
+    }
+
+    function test_escrow_ownerCancelsAndOnlyOwnerConfigures() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
+        bytes memory delivered = abi.encode(true);
+        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+
+        // a stranger cannot reconfigure the escrow
+        vm.prank(bob);
+        vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
+        rule.configure(id, ATTACKER, 1, keccak256("x"));
+
+        // owner cancels; even a valid proof can't revive it
+        vm.prank(alice);
+        rule.cancel(id);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no active escrow"));
+        rule.release(id, _proof(delivered));
     }
 }

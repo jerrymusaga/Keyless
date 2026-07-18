@@ -2,6 +2,7 @@
 pragma solidity ^0.8.23;
 
 import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
+import {IWeb2Json} from "../src/interfaces/IFdc.sol";
 import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 
 /// @notice Mock of Flare's TEE manager diamond. Records the last instruction so tests can assert
@@ -87,5 +88,20 @@ contract MockFlareTeeManager {
 
     function getTeeExtensionInstructionsSender(uint256) external view returns (address) {
         return boundInstructionsSender;
+    }
+}
+
+/// @notice Mock of Flare's FdcVerification. `verifyJsonApi` returns whatever the test sets — standing
+///         in for the real Merkle-root check so escrow tests can drive both the proven and unproven
+///         paths without a live FDC round.
+contract MockFdcVerification {
+    bool public result = true;
+
+    function setResult(bool r) external {
+        result = r;
+    }
+
+    function verifyJsonApi(IWeb2Json.Proof calldata) external view returns (bool) {
+        return result;
     }
 }
