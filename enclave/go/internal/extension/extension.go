@@ -27,9 +27,10 @@ import (
 //
 // SECURITY MODEL — read this before changing anything here.
 //
-// The XRPL private key is generated INSIDE this enclave (see processInit) and never leaves it.
-// It is not delivered by an operator, not decrypted from chain, not restorable from a backup.
-// Nobody — not the person running this machine, not the authors — has ever seen it.
+// The enclave is a KEYRING. It holds one XRPL private key per walletId, and every key is generated
+// INSIDE this enclave (see processInit) and never leaves it. No key is delivered by an operator,
+// decrypted from chain, or restorable from a backup. Nobody — not the person running this machine,
+// not the authors — has ever seen one.
 //
 // This is the one thing that makes Keyless true rather than theatre. Flare's reference `fce-sign`
 // extension takes the opposite approach: an operator generates a key off-chain, encrypts it, and
@@ -37,9 +38,12 @@ import (
 // like straight to the ledger, and every on-chain policy above them is decorative. We do not do
 // that, and there is deliberately no code path here that accepts a private key from outside.
 //
-// The only thing that can make this key sign anything is a PAY instruction, and the Flare TEE node
-// only delivers instructions that came from the extension's registered instructionsSender — which
-// is the policy contract. So: policy decides, enclave signs, operator watches.
+// Many wallets can live in one enclave (one key per walletId), which is what makes Keyless
+// multi-tenant: each user or agent gets its own XRPL account whose spending is bound by its own
+// on-chain policy. The only thing that can make a key sign anything is a PAY (XRPSEND) instruction
+// naming that walletId, and the Flare TEE node only delivers instructions that came from the
+// extension's registered instructionsSender — the policy contract. So: policy decides which wallet
+// pays what, the enclave signs, the operator watches.
 type Extension struct {
 	mu     sync.RWMutex
 	Server *http.Server
@@ -47,16 +51,16 @@ type Extension struct {
 	// signPort is the TEE node's RPC port.
 	signPort int
 
-	// xrplWallet is generated in-enclave by INIT. Nil until then.
-	xrplWallet *wallet.Wallet
+	// wallets is the enclave keyring: walletId -> XRPL wallet, each generated in-enclave by INIT.
+	wallets map[[32]byte]*wallet.Wallet
 
-	// xrplClient submits signed transactions to the XRP Ledger.
+	// xrplClient submits signed transactions to the XRP Ledger (shared across wallets).
 	xrplClient *rpc.Client
 }
 
 // --- DO NOT MODIFY: New(), actionHandler() are boilerplate.
 func New(extensionPort, signPort int) *Extension {
-	e := &Extension{signPort: signPort}
+	e := &Extension{signPort: signPort, wallets: make(map[[32]byte]*wallet.Wallet)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /state", e.stateHandler)
@@ -66,12 +70,17 @@ func New(extensionPort, signPort int) *Extension {
 	return e
 }
 
-// stateHandler reports the XRPL address, never the key.
+// stateHandler reports each wallet's XRPL address, never any key.
 func (e *Extension) stateHandler(w http.ResponseWriter, r *http.Request) {
 	e.mu.RLock()
-	st := types.State{HasKey: e.xrplWallet != nil}
-	if e.xrplWallet != nil {
-		st.XrplAddress = string(e.xrplWallet.GetAddress())
+	st := types.State{
+		HasKey:  len(e.wallets) > 0,
+		Wallets: make(map[string]string, len(e.wallets)),
+	}
+	for id, wlt := range e.wallets {
+		addr := string(wlt.GetAddress())
+		st.Wallets["0x"+hex.EncodeToString(id[:])] = addr
+		st.XrplAddress = addr // back-compat: any one address
 	}
 	e.mu.RUnlock()
 
@@ -127,30 +136,36 @@ func (e *Extension) processKeyless(action teetypes.Action, df *instruction.DataF
 	}
 }
 
-// processInit generates the XRPL key INSIDE the enclave and returns only its public address.
+// processInit generates the XRPL key for one walletId INSIDE the enclave and returns only its
+// public address.
 //
-// There is no input to this command and no way to influence the key that comes out of it. The seed
-// is drawn from the enclave's own entropy; the private key is held in memory here and is never
-// written to disk, never logged, never returned, and never sent to the TEE node. The caller learns
-// the r-address and nothing else.
+// The only input is the walletId to create (abi.encode(bytes32) — see decodeWalletID). Nothing about
+// the key itself can be influenced from outside: the seed is drawn from the enclave's own entropy;
+// the private key is held in memory here and is never written to disk, never logged, never returned,
+// and never sent to the TEE node. The caller learns the r-address and nothing else.
 //
-// Idempotent: if a key already exists, the existing address is returned rather than replacing it.
-// Overwriting would strand any funds already held at the old address.
+// Idempotent per walletId: if that wallet already exists, its address is returned rather than
+// replaced. Overwriting would strand any funds held at the old address.
 func (e *Extension) processInit(action teetypes.Action, df *instruction.DataFixed) teetypes.ActionResult {
+	walletID, err := decodeWalletID(df.OriginalMessage)
+	if err != nil {
+		return buildResult(action, df, nil, 0, fmt.Errorf("decoding walletId: %v", err))
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.xrplWallet == nil {
-		w, err := wallet.New(xrplcrypto.SECP256K1())
+	w, ok := e.wallets[walletID]
+	if !ok {
+		nw, err := wallet.New(xrplcrypto.SECP256K1())
 		if err != nil {
 			return buildResult(action, df, nil, 0, fmt.Errorf("key generation failed: %v", err))
 		}
-		e.xrplWallet = &w
+		w = &nw
+		e.wallets[walletID] = w
 	}
 
-	addr := string(e.xrplWallet.GetAddress())
-
-	encoded, err := abiEncodeString(addr)
+	encoded, err := abiEncodeString(string(w.GetAddress()))
 	if err != nil {
 		return buildResult(action, df, nil, 0, fmt.Errorf("ABI encoding failed: %v", err))
 	}
@@ -168,14 +183,6 @@ func (e *Extension) processInit(action teetypes.Action, df *instruction.DataFixe
 // path from "operator sends an HTTP request" to "a signature". The only caller of the signing key
 // is this function, and this function only runs on an instruction that the chain already authorized.
 func (e *Extension) processPay(action teetypes.Action, df *instruction.DataFixed) teetypes.ActionResult {
-	e.mu.RLock()
-	w := e.xrplWallet
-	client := e.xrplClient
-	e.mu.RUnlock()
-
-	if w == nil {
-		return buildResult(action, df, nil, 0, fmt.Errorf("no XRPL key: send an INIT instruction first"))
-	}
 	if len(df.OriginalMessage) == 0 {
 		return buildResult(action, df, nil, 0, fmt.Errorf("originalMessage is empty"))
 	}
@@ -187,6 +194,18 @@ func (e *Extension) processPay(action teetypes.Action, df *instruction.DataFixed
 	}
 	if p.Amount == 0 {
 		return buildResult(action, df, nil, 0, fmt.Errorf("zero amount"))
+	}
+
+	// Select the key for THIS wallet. The policy put walletId in the instruction; a payment for a
+	// wallet the enclave hasn't generated (no INIT) has nowhere to draw a key from.
+	e.mu.RLock()
+	w, ok := e.wallets[p.WalletID]
+	client := e.xrplClient
+	e.mu.RUnlock()
+
+	if !ok {
+		return buildResult(action, df, nil, 0,
+			fmt.Errorf("no key for walletId 0x%x: send an INIT instruction for it first", p.WalletID))
 	}
 
 	if client == nil {

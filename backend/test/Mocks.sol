@@ -20,6 +20,7 @@ contract MockFlareTeeManager {
     bytes32 public lastReference;
     bytes32 public lastWalletId;
     bytes32 public lastOpType;
+    bytes32 public lastOpCommand;
     uint256 public lastFeePaid;
     uint256 public instructionCount;
     /// @dev How many machines the last instruction fanned out to. Must be 1 for payments.
@@ -44,17 +45,27 @@ contract MockFlareTeeManager {
         require(_teeIds.length > 0, "NoTeeMachinesSpecified");
         require(msg.value >= FEE, "fee");
 
-        AuthorizedPayPolicy.XrplPayment memory p =
-            abi.decode(_params.message, (AuthorizedPayPolicy.XrplPayment));
-
-        lastWalletId = p.walletId;
-        lastRecipient = p.recipient;
-        lastAmount = p.amount;
-        lastReference = p.paymentReference;
         lastOpType = _params.opType;
+        lastOpCommand = _params.opCommand;
         lastFeePaid = msg.value;
         lastTeeIdCount = _teeIds.length;
         instructionCount++;
+
+        if (_params.opCommand == bytes32("INIT")) {
+            // INIT message is abi.encode(bytes32 walletId).
+            lastWalletId = abi.decode(_params.message, (bytes32));
+            lastRecipient = "";
+            lastAmount = 0;
+            lastReference = bytes32(0);
+        } else {
+            // XRPSEND message is abi.encode(XrplPayment).
+            AuthorizedPayPolicy.XrplPayment memory p =
+                abi.decode(_params.message, (AuthorizedPayPolicy.XrplPayment));
+            lastWalletId = p.walletId;
+            lastRecipient = p.recipient;
+            lastAmount = p.amount;
+            lastReference = p.paymentReference;
+        }
 
         return bytes32(nextId++);
     }

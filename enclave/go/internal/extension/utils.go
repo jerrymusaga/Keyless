@@ -99,6 +99,22 @@ func xrplPaymentArgs() (abi.Arguments, error) {
 	return abi.Arguments{{Type: t}}, nil
 }
 
+// decodeWalletID reads the walletId an INIT instruction targets. The policy sends it as
+// abi.encode(bytes32 walletId), which is exactly the 32-byte value. Multiple wallets can be
+// generated in the same enclave, one key per walletId — that is what makes Keyless multi-tenant
+// (each user/agent gets its own rule-bound XRPL account) without ever exposing a key.
+func decodeWalletID(message []byte) ([32]byte, error) {
+	var id [32]byte
+	if len(message) < 32 {
+		return id, fmt.Errorf("INIT message too short for walletId: got %d bytes, need 32", len(message))
+	}
+	copy(id[:], message[:32])
+	if id == ([32]byte{}) {
+		return id, fmt.Errorf("walletId is zero")
+	}
+	return id, nil
+}
+
 // decodeXrplPayment decodes abi.encode(AuthorizedPayPolicy.XrplPayment) from the instruction message.
 func decodeXrplPayment(message []byte) (*XrplPayment, error) {
 	args, err := xrplPaymentArgs()
