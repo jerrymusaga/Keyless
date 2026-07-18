@@ -54,7 +54,7 @@ export function Refuse() {
   return (
     <Section
       id="refuse"
-      index="02"
+      index="03"
       eyebrow="Watch it refuse"
       title="You are the operator. Try to pay yourself."
       lede={

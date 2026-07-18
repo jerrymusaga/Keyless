@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 40" width="168" height="40" role="img" aria-label="Keyless">
+  <!-- Tile-less lockup for placing on your own dark surface -->
+  <!-- KeyholeMark — exact site geometry -->
+  <g transform="translate(2 3.6) scale(1.4)" fill="none" stroke-width="1.6" stroke-linecap="round">
+    <path d="M8 10V7a4 4 0 0 1 7.5-1.9" stroke="#2ed3bd"/>
+    <rect x="4" y="10" width="16" height="11" rx="2.5" stroke="#e6e9f2"/>
+    <circle cx="12" cy="15" r="1.6" fill="#2ed3bd" stroke="none"/>
+    <path d="M12 16.6V18.2" stroke="#2ed3bd"/>
+  </g>
+  <!-- Wordmark: site header mono, 0.2em tracking, mist-100 -->
+  <text x="48" y="20" dominant-baseline="central"
+        font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace"
+        font-size="17" font-weight="500" letter-spacing="3.4" fill="#e6e9f2">KEYLESS</text>
+</svg>

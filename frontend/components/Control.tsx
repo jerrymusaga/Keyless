@@ -16,12 +16,11 @@ type ChainState = {
   readAt?: string;
   blockNumber?: string;
   instructionsSender?: string;
-  senderIsPolicy?: boolean;
+  senderIsAccounts?: boolean;
   activeMachines?: string[];
   isBound?: boolean;
   owner?: string;
   extensionId?: string;
-  allowlistedRecipientIsAllowed?: boolean;
   error?: string;
 };
 
@@ -50,13 +49,13 @@ export function Control() {
       id="control"
       index="01"
       eyebrow="Who is in control"
-      title="This contract is in control. Not a human."
+      title="A contract holds the key. Not a human."
       lede={
         <>
           Flare&rsquo;s TEE machines accept instructions from exactly one address per extension — the
-          registered <Code>instructionsSender</Code>. Ours is a contract. The XRPL key sealed inside
-          the enclave can only ever sign what that contract permits, and the operator cannot ask it
-          for anything else.
+          registered <Code>instructionsSender</Code>. Ours is <Code>KeylessAccounts</Code>. Every
+          wallet&rsquo;s key, sealed inside the enclave, can only ever sign what that contract&rsquo;s
+          rules permit — and the operator cannot ask it for anything else.
         </>
       }
     >
@@ -93,8 +92,8 @@ export function Control() {
                   state?.instructionsSender ? (
                     <>
                       {state.instructionsSender}
-                      {state.senderIsPolicy && (
-                        <span className="ml-2 text-allow-500">— the policy contract ✓</span>
+                      {state.senderIsAccounts && (
+                        <span className="ml-2 text-allow-500">— KeylessAccounts ✓</span>
                       )}
                     </>
                   ) : (
@@ -105,8 +104,8 @@ export function Control() {
                 tone="signal"
               />
               <Fact
-                label="Policy bound"
-                hint="isBound() on the policy"
+                label="Rules bound"
+                hint="isBound() on KeylessAccounts"
                 value={
                   state ? (
                     state.isBound ? (
@@ -166,8 +165,8 @@ export function Control() {
           title="What can be signed"
           body={
             <>
-              The policy contract. The enclave takes orders from nobody else — Flare&rsquo;s
-              InstructionsFacet enforces it at the chain level.
+              Only what a wallet&rsquo;s rule permits. The enclave takes orders from KeylessAccounts
+              and nobody else — Flare&rsquo;s InstructionsFacet enforces it at the chain level.
             </>
           }
         />

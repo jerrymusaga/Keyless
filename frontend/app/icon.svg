@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Ink tile, matching the site background -->
+  <rect width="48" height="48" rx="11" fill="#0b0d12"/>
+  <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="10.25" fill="none" stroke="#1d2230" stroke-width="1.5"/>
+  <!-- The KeyholeMark, exact geometry, scaled and centered -->
+  <g transform="translate(6 6) scale(1.5)" fill="none" stroke-width="1.6" stroke-linecap="round">
+    <!-- open shackle -->
+    <path d="M8 10V7a4 4 0 0 1 7.5-1.9" stroke="#2ed3bd"/>
+    <!-- lock body -->
+    <rect x="4" y="10" width="16" height="11" rx="2.5" stroke="#e6e9f2"/>
+    <!-- empty keyhole -->
+    <circle cx="12" cy="15" r="1.6" fill="#2ed3bd" stroke="none"/>
+    <path d="M12 16.6V18.2" stroke="#2ed3bd"/>
+  </g>
+</svg>

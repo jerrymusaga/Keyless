@@ -24,7 +24,7 @@ export function Footer() {
                 On-chain
               </div>
               <ul className="mt-3 space-y-2">
-                <Link href={explorerAddress(ADDRESSES.policy)} label="Policy contract" />
+                <Link href={explorerAddress(ADDRESSES.accounts)} label="KeylessAccounts" />
                 <Link href={explorerAddress(ADDRESSES.teeManager)} label="Flare TEE manager" />
                 <Link href={explorerAddress(ADDRESSES.teeMachine)} label="TEE machine" />
               </ul>
