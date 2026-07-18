@@ -2,76 +2,44 @@
 pragma solidity ^0.8.23;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {KeylessDemoPolicy} from "../src/policies/KeylessDemoPolicy.sol";
-import {KeylessRedemptionPolicy} from "../src/policies/KeylessRedemptionPolicy.sol";
+import {KeylessAccounts} from "../src/KeylessAccounts.sol";
+import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
+import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
+import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
-import {IAssetManager} from "../src/interfaces/IAssetManager.sol";
 
+/// @notice Deploys the Keyless product: the multi-tenant account manager + the three rule modules.
+///
 /// @dev Deploy order for the whole system:
-///   1. BootstrapExtension.s.sol   → EXTENSION_ID  (done: 454 on Coston2)
-///   2. run a TEE machine on the registered code hash → register it → toProduction()
-///   3. CreateWallet.s.sol         → WALLET_ID (the enclave generates the XRPL key)
-///   4. Deploy.s.sol (this file)   → the policy
-///   5. BootstrapExtension.s.sol:BindPolicy → the policy becomes the extension's instructions
-///      sender, and from that moment it is the only thing the enclave will obey.
-abstract contract KeylessDeploy is Script {
+///   1. BootstrapExtension.s.sol       -> EXTENSION_ID (register our own FCE extension)
+///   2. run a TEE machine on the code hash -> register it -> toProduction()
+///   3. Deploy.s.sol (this file)        -> KeylessAccounts + rules; put KEYLESS_ACCOUNTS in .env
+///   4. BootstrapExtension.s.sol:BindPolicy -> make KeylessAccounts the extension's instructionsSender
+///
+///   After that a user (or the UI) calls createWallet() — which itself sends the INIT that makes the
+///   enclave generate that wallet's key. No separate INIT step, no rebinding dance.
+contract DeployKeyless is Script {
     address constant FLARE_TEE_MANAGER = 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F;
 
-    function _common()
-        internal
-        view
-        returns (IFlareTeeManager tee, uint256 extensionId, bytes32 walletId, string memory xrplAccount, address claimBack)
-    {
-        tee = IFlareTeeManager(FLARE_TEE_MANAGER);
-        extensionId = vm.envUint("EXTENSION_ID");
-        walletId = vm.envBytes32("WALLET_ID");
-        xrplAccount = vm.envString("XRPL_ACCOUNT");
-        claimBack = vm.envOr("CLAIM_BACK", msg.sender);
-    }
-}
-
-/// @notice Deploys the demo policy — the one that moves real XRP today, no FAssets status needed.
-contract DeployDemo is KeylessDeploy {
     function run() external {
-        (
-            IFlareTeeManager tee,
-            uint256 extensionId,
-            bytes32 walletId,
-            string memory xrplAccount,
-            address claimBack
-        ) = _common();
+        uint256 extensionId = vm.envUint("EXTENSION_ID");
+        address claimBack = vm.envOr("CLAIM_BACK", msg.sender);
 
         vm.startBroadcast();
-        KeylessDemoPolicy policy =
-            new KeylessDemoPolicy(tee, extensionId, walletId, xrplAccount, claimBack);
+        KeylessAccounts accounts =
+            new KeylessAccounts(IFlareTeeManager(FLARE_TEE_MANAGER), extensionId, claimBack);
+        AllowlistRule allowlist = new AllowlistRule(address(accounts));
+        RateLimitRule rateLimit = new RateLimitRule(address(accounts));
+        SubscriptionRule subscription = new SubscriptionRule(address(accounts));
         vm.stopBroadcast();
 
-        console2.log("KeylessDemoPolicy:", address(policy));
-        console2.log("Next: KEYLESS_POLICY=%s then run BindPolicy", vm.toString(address(policy)));
-    }
-}
-
-/// @notice Deploys the flagship redemption policy.
-contract DeployRedemption is KeylessDeploy {
-    function run() external {
-        (
-            IFlareTeeManager tee,
-            uint256 extensionId,
-            bytes32 walletId,
-            string memory xrplAccount,
-            address claimBack
-        ) = _common();
-        address assetManager = vm.envAddress("ASSET_MANAGER_FXRP");
-
-        vm.startBroadcast();
-        KeylessRedemptionPolicy policy = new KeylessRedemptionPolicy(
-            tee, extensionId, walletId, xrplAccount, claimBack, IAssetManager(assetManager)
-        );
-        vm.stopBroadcast();
-
-        console2.log("KeylessRedemptionPolicy:", address(policy));
-        console2.log("This is the flagship. It becomes a LIVE trustless agent once:");
-        console2.log(" 1. it is bound as the extension's instructions sender (BindPolicy)");
-        console2.log(" 2. its XRPL account is a whitelisted FAssets agent underlying address");
+        console2.log("=== Keyless deployed ===");
+        console2.log("KeylessAccounts  :", address(accounts));
+        console2.log("AllowlistRule    :", address(allowlist));
+        console2.log("RateLimitRule    :", address(rateLimit));
+        console2.log("SubscriptionRule :", address(subscription));
+        console2.log("");
+        console2.log("Next: KEYLESS_ACCOUNTS=%s in .env, then run BindPolicy", vm.toString(address(accounts)));
+        console2.log("Then createWallet() creates an account and sends its own INIT.");
     }
 }

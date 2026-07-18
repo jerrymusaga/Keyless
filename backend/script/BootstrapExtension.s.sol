@@ -106,9 +106,10 @@ contract BootstrapExtension is Script {
     }
 }
 
-/// @notice Rebind the extension to the deployed policy contract + state verifier.
-/// @dev Run AFTER the policy is deployed. From this point the policy contract is the only thing on
-///      earth that can instruct our TEE machines — which is the entire Keyless guarantee.
+/// @notice Bind the extension to the deployed KeylessAccounts manager.
+/// @dev Run AFTER KeylessAccounts is deployed. From this point KeylessAccounts is the only thing on
+///      earth that can instruct our TEE machines — which is the entire Keyless guarantee. Once bound,
+///      createWallet() can send INIT and pay() can send XRPSEND.
 contract BindPolicy is Script {
     address constant FLARE_TEE_MANAGER = 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F;
 
@@ -116,18 +117,19 @@ contract BindPolicy is Script {
         IFlareTeeManager tee = IFlareTeeManager(FLARE_TEE_MANAGER);
 
         uint256 extensionId = vm.envUint("EXTENSION_ID");
-        address policy = vm.envAddress("KEYLESS_POLICY");
-        address verifier = vm.envAddress("KEYLESS_VERIFIER");
+        address accounts = vm.envAddress("KEYLESS_ACCOUNTS");
+        // We don't run an on-chain state verifier; the authorization guarantee is the manager + rules.
+        address verifier = vm.envOr("KEYLESS_VERIFIER", address(0));
 
         vm.startBroadcast();
-        tee.setExtensionContracts(extensionId, verifier, policy);
+        tee.setExtensionContracts(extensionId, verifier, accounts);
         vm.stopBroadcast();
 
         require(
-            tee.getTeeExtensionInstructionsSender(extensionId) == policy,
-            "policy is not the instructions sender"
+            tee.getTeeExtensionInstructionsSender(extensionId) == accounts,
+            "KeylessAccounts is not the instructions sender"
         );
 
-        console2.log("Extension %s is now driven ONLY by policy %s", extensionId, policy);
+        console2.log("Extension %s is now driven ONLY by KeylessAccounts %s", extensionId, accounts);
     }
 }

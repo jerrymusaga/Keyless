@@ -2,8 +2,7 @@
 pragma solidity ^0.8.23;
 
 import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
-import {AuthorizedPayPolicy} from "../src/AuthorizedPayPolicy.sol";
-import {IAssetManager, RedemptionRequestInfo} from "../src/interfaces/IAssetManager.sol";
+import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 
 /// @notice Mock of Flare's TEE manager diamond. Records the last instruction so tests can assert
 ///         exactly what the enclave would have been told to sign.
@@ -59,8 +58,8 @@ contract MockFlareTeeManager {
             lastReference = bytes32(0);
         } else {
             // XRPSEND message is abi.encode(XrplPayment).
-            AuthorizedPayPolicy.XrplPayment memory p =
-                abi.decode(_params.message, (AuthorizedPayPolicy.XrplPayment));
+            KeylessAccounts.XrplPayment memory p =
+                abi.decode(_params.message, (KeylessAccounts.XrplPayment));
             lastWalletId = p.walletId;
             lastRecipient = p.recipient;
             lastAmount = p.amount;
@@ -88,32 +87,5 @@ contract MockFlareTeeManager {
 
     function getTeeExtensionInstructionsSender(uint256) external view returns (address) {
         return boundInstructionsSender;
-    }
-}
-
-/// @notice Mock FAssets AssetManager. Lets tests set a redemption and simulate confirm-deletion.
-contract MockAssetManager is IAssetManager {
-    mapping(uint256 => RedemptionRequestInfo.Data) internal requests;
-    mapping(uint256 => bool) internal exists;
-
-    function setRedemption(uint256 id, RedemptionRequestInfo.Data calldata data) external {
-        requests[id] = data;
-        exists[id] = true;
-    }
-
-    /// @notice Simulate confirmation: the real AssetManager deletes the request, so the view reverts.
-    function confirmAndDelete(uint256 id) external {
-        delete requests[id];
-        exists[id] = false;
-    }
-
-    function redemptionRequestInfo(uint256 id)
-        external
-        view
-        override
-        returns (RedemptionRequestInfo.Data memory)
-    {
-        require(exists[id], "invalid redemption request"); // mirrors real revert-on-confirm
-        return requests[id];
     }
 }
