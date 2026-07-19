@@ -28,10 +28,12 @@ contract DeployKeyless is Script {
         uint256 extensionId = vm.envUint("EXTENSION_ID");
         address claimBack = vm.envOr("CLAIM_BACK", msg.sender);
         address fdc = vm.envOr("FDC_VERIFICATION", FDC_VERIFICATION_COSTON2);
+        // The enclave relayer key that reports XRPL addresses on-chain. Defaults to the deployer.
+        address reporter = vm.envOr("ENCLAVE_REPORTER", msg.sender);
 
         vm.startBroadcast();
         KeylessAccounts accounts =
-            new KeylessAccounts(IFlareTeeManager(FLARE_TEE_MANAGER), extensionId, claimBack);
+            new KeylessAccounts(IFlareTeeManager(FLARE_TEE_MANAGER), extensionId, claimBack, reporter);
         AllowlistRule allowlist = new AllowlistRule(address(accounts));
         RateLimitRule rateLimit = new RateLimitRule(address(accounts));
         SubscriptionRule subscription = new SubscriptionRule(address(accounts));
@@ -44,6 +46,7 @@ contract DeployKeyless is Script {
         console2.log("RateLimitRule    :", address(rateLimit));
         console2.log("SubscriptionRule :", address(subscription));
         console2.log("FdcEscrowRule    :", address(escrow));
+        console2.log("Enclave reporter :", reporter);
         console2.log("");
         console2.log("Next: KEYLESS_ACCOUNTS=%s in .env, then run BindPolicy", vm.toString(address(accounts)));
         console2.log("Then createWallet() creates an account and sends its own INIT.");

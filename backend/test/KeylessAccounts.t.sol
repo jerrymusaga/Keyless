@@ -19,6 +19,7 @@ contract KeylessAccountsTest is Test {
     uint256 constant EXT_ID = 454;
     uint256 constant FEE = 1000;
     address constant CLAIMBACK = address(0xC1a1);
+    address reporter = makeAddr("enclaveReporter");
 
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
@@ -32,7 +33,7 @@ contract KeylessAccountsTest is Test {
         m[0] = makeAddr("teeMachine");
         tee.setMachines(m);
 
-        accounts = new KeylessAccounts(IFlareTeeManager(address(tee)), EXT_ID, CLAIMBACK);
+        accounts = new KeylessAccounts(IFlareTeeManager(address(tee)), EXT_ID, CLAIMBACK, reporter);
         tee.setInstructionsSender(address(accounts)); // simulate Flare binding
 
         vm.deal(alice, 1 ether);
@@ -68,6 +69,41 @@ contract KeylessAccountsTest is Test {
         bytes32 id = _wallet(alice, "main");
         vm.expectRevert(KeylessAccounts.NoRule.selector);
         accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
+    }
+
+    // --- xrpl address writeback ----------------------------------------------
+
+    string constant RADDR = "rKeyLessWa11etXXXXXXXXXXXXXXXXXXXXX";
+
+    function test_reportXrplAddress_onlyReporter_andReadableOnChain() public {
+        bytes32 id = _wallet(alice, "main");
+        assertEq(bytes(accounts.xrplAddressOf(id)).length, 0, "empty before report");
+
+        // a stranger (even the owner) cannot report the address
+        vm.prank(alice);
+        vm.expectRevert(KeylessAccounts.NotReporter.selector);
+        accounts.reportXrplAddress(id, RADDR);
+
+        // the enclave reporter records it; the UI can now read it straight from chain
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, RADDR);
+        assertEq(accounts.xrplAddressOf(id), RADDR);
+    }
+
+    function test_reportXrplAddress_isIdempotent_firstWins() public {
+        bytes32 id = _wallet(alice, "main");
+        vm.startPrank(reporter);
+        accounts.reportXrplAddress(id, RADDR);
+        // a later report can't repoint a (possibly funded) wallet's deposit address
+        accounts.reportXrplAddress(id, "rATTACKERredirectXXXXXXXXXXXXXXXXXX");
+        vm.stopPrank();
+        assertEq(accounts.xrplAddressOf(id), RADDR, "first report wins");
+    }
+
+    function test_reportXrplAddress_rejectsUnknownWallet() public {
+        vm.prank(reporter);
+        vm.expectRevert(KeylessAccounts.UnknownWallet.selector);
+        accounts.reportXrplAddress(bytes32("nope"), RADDR);
     }
 
     // --- allowlist rule: the headline (can't be drained) ---------------------

@@ -34,6 +34,14 @@ contract KeylessAccounts {
     /// @notice Where unspent instruction fees are refunded.
     address public immutable claimBackAddress;
 
+    /// @notice The only address allowed to report a wallet's enclave-generated XRPL address back
+    ///         on-chain. This is the enclave's relayer key: after INIT the enclave produces the
+    ///         r-address (as the instruction result / GET /state), and the relayer writes it here so a
+    ///         UI can read a wallet's deposit address straight from the chain, with no enclave-API
+    ///         dependency. The reporter can only *record* an address for an existing wallet — it has no
+    ///         power over keys, rules, or funds.
+    address public immutable enclaveReporter;
+
     /// @notice Keyless's operation family. Deliberately NOT a system opType.
     bytes32 public constant OP_TYPE = bytes32("KEYLESS_XRP");
     /// @notice Generate a wallet's XRPL key in-enclave.
@@ -54,26 +62,33 @@ contract KeylessAccounts {
     mapping(bytes32 => address) public ownerOf;
     /// @notice walletId => its spending rule (IKeylessRule). Zero until set.
     mapping(bytes32 => address) public ruleOf;
+    /// @notice walletId => the enclave-generated XRPL r-address (its deposit address). Empty until the
+    ///         enclave reporter records it, shortly after createWallet.
+    mapping(bytes32 => string) public xrplAddressOf;
 
     uint256 private _lock;
 
     event WalletCreated(bytes32 indexed walletId, address indexed owner, bytes32 initInstructionId);
     event RuleSet(bytes32 indexed walletId, address indexed rule);
+    event XrplAddressReported(bytes32 indexed walletId, string xrplAddress);
     event PaymentAuthorized(
         bytes32 indexed walletId, bytes32 indexed instructionId, string recipient, uint256 amount
     );
 
     error NotWalletOwner();
+    error NotReporter();
+    error UnknownWallet();
     error WalletExists();
     error NoRule();
     error NoTeeMachines();
     error InsufficientFee(uint256 required, uint256 provided);
     error Reentrancy();
 
-    constructor(IFlareTeeManager _teeManager, uint256 _extensionId, address _claimBack) {
+    constructor(IFlareTeeManager _teeManager, uint256 _extensionId, address _claimBack, address _reporter) {
         teeManager = _teeManager;
         extensionId = _extensionId;
         claimBackAddress = _claimBack == address(0) ? msg.sender : _claimBack;
+        enclaveReporter = _reporter == address(0) ? msg.sender : _reporter;
     }
 
     modifier nonReentrant() {
@@ -123,6 +138,18 @@ contract KeylessAccounts {
     function setRule(bytes32 walletId, address rule) external onlyWalletOwner(walletId) {
         ruleOf[walletId] = rule;
         emit RuleSet(walletId, rule);
+    }
+
+    /// @notice Record a wallet's enclave-generated XRPL address. Callable ONLY by the enclave reporter,
+    ///         and only for a wallet that exists. Idempotent: the first report wins and cannot be
+    ///         overwritten, mirroring the enclave's own per-walletId key idempotency (see processInit),
+    ///         so a later call can never repoint a funded wallet's deposit address.
+    function reportXrplAddress(bytes32 walletId, string calldata xrplAddress) external {
+        if (msg.sender != enclaveReporter) revert NotReporter();
+        if (ownerOf[walletId] == address(0)) revert UnknownWallet();
+        if (bytes(xrplAddressOf[walletId]).length != 0) return; // already recorded; no-op
+        xrplAddressOf[walletId] = xrplAddress;
+        emit XrplAddressReported(walletId, xrplAddress);
     }
 
     /// @notice Spend from a wallet. Runs the wallet's rule first; the enclave signs only if it passes.
