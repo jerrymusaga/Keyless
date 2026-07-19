@@ -76,17 +76,17 @@ export function Hero() {
           {...rise(0.54)}
         >
           <a
-            href="#refuse"
+            href="/app"
             className="group inline-flex items-center justify-center gap-2 rounded-lg bg-mist-100 px-5 py-3 text-sm font-medium text-ink-950 transition-colors hover:bg-white"
           >
-            Watch it refuse to be robbed
+            Create an account
             <span className="text-ink-950/40 transition-transform group-hover:translate-x-0.5">→</span>
           </a>
           <a
-            href="#control"
+            href="#refuse"
             className="inline-flex items-center justify-center gap-2 rounded-lg border hairline bg-ink-850/80 px-5 py-3 text-sm text-mist-300 transition-colors hover:border-ink-600 hover:text-mist-100"
           >
-            See who holds the key
+            Watch it refuse to be robbed
           </a>
         </motion.div>
 

@@ -41,12 +41,17 @@ export const ADDRESSES = {
   teeMachine: "0x27a7A5D0968F8948F65536B34125A7b2748Ad316",
 } as const;
 
-/** The three shipped rule modules. Each is one readable contract; a wallet points at one. */
+/** The rule modules. Each is one readable contract; a wallet points at one. `escrow` is built + tested
+ *  but ships with the next full redeploy, so its address is the zero address until then — the UI treats
+ *  a zero-address rule as "available soon" and won't let a wallet point at it. */
 export const RULES = {
   allowlist: "0x306F7355AD76448b49A1a52a521ef11Ff17FeE44",
   rateLimit: "0xAD8151C8e591dE06e968FD824057D73268F5e1d8",
   subscription: "0xf0a6ECbF1a6828dEc4509b7C33534cAaA8386C50",
+  escrow: "0x0000000000000000000000000000000000000000",
 } as const;
+
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export const EXTENSION_ID = 454;
 
@@ -169,6 +174,29 @@ export const ACCOUNTS_ABI = [
   },
   {
     type: "function",
+    name: "xrplAddressOf",
+    stateMutability: "view",
+    inputs: [{ type: "bytes32" }],
+    outputs: [{ type: "string" }],
+  },
+  {
+    type: "function",
+    name: "reportXrplAddress",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "walletId", type: "bytes32" }, { name: "xrplAddress", type: "string" }],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "WalletCreated",
+    inputs: [
+      { name: "walletId", type: "bytes32", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "initInstructionId", type: "bytes32", indexed: false },
+    ],
+  },
+  {
+    type: "function",
     name: "quoteFee",
     stateMutability: "view",
     inputs: [{ name: "opCommand", type: "bytes32" }],
@@ -210,6 +238,57 @@ export const ACCOUNTS_ABI = [
     inputs: [{ name: "required", type: "uint256" }, { name: "provided", type: "uint256" }],
   },
 ] as const;
+
+/** The four rule modules, with the config calls each exposes. A wallet points at one; its owner then
+ *  configures it through these. All are `onlyWalletOwner(walletId)` on-chain. */
+export const RULE_ABIS = {
+  allowlist: [
+    { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "allowed", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes32" }], outputs: [{ type: "bool" }] },
+  ],
+  rateLimit: [
+    { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxPerWindow", type: "uint256" }, { name: "window", type: "uint64" }], outputs: [] },
+  ],
+  subscription: [
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "merchant", type: "string" }, { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" }], outputs: [] },
+    { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
+  ],
+  escrow: [
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" }], outputs: [] },
+    { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
+  ],
+} as const;
+
+/** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
+export type RuleKey = keyof typeof RULES;
+export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string }> = {
+  allowlist: {
+    name: "Exchange-only",
+    tagline: "Pay only addresses you've allowlisted. Everything else is refused.",
+    protects: "A stolen key, a poisoned address, a compromised app — none can send anywhere new.",
+    address: RULES.allowlist,
+  },
+  rateLimit: {
+    name: "Agent wallet",
+    tagline: "An allowance: a cap per time window, to allowlisted addresses only.",
+    protects: "A hijacked or prompt-injected agent can spend up to the cap — never drain the account.",
+    address: RULES.rateLimit,
+  },
+  subscription: {
+    name: "Subscription",
+    tagline: "One merchant may pull up to a fixed amount per period. Cancel anytime.",
+    protects: "The merchant provably cannot overcharge, redirect, or bill after you cancel.",
+    address: RULES.subscription,
+  },
+  escrow: {
+    name: "Conditional (FDC)",
+    tagline: "Pay a supplier only once Flare's Data Connector proves the condition.",
+    protects: "Funds stay locked until the world proves delivery — no early release, no wrong payee.",
+    address: RULES.escrow,
+  },
+};
 
 export const TEE_MANAGER_ABI = [
   {

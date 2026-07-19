@@ -15,20 +15,20 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Keyless — an FAssets agent nobody has to trust",
+  title: "Keyless — an XRP account that only does what you allow",
   description:
-    "The operator runs the machine but holds no key. An XRPL account governed by an on-chain policy contract, so an FAssets agent can be funded by anyone — because the operator provably cannot steal.",
+    "A programmable XRP account whose key is born inside a secure enclave and can only ever sign what your on-chain rules permit. Steal the key, hijack the app, poison the address — it still can't be drained.",
   openGraph: {
-    title: "Keyless — an FAssets agent nobody has to trust",
+    title: "Keyless — an XRP account that only does what you allow",
     description:
-      "Watch a live policy contract refuse to pay an address it doesn't allow. No wallet needed.",
+      "The key is born in a TEE and can only sign what your rules permit. The rules aren't for you — they're for whoever gets in.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Keyless — an FAssets agent nobody has to trust",
+    title: "Keyless — an XRP account that only does what you allow",
     description:
-      "Watch a live policy contract refuse to pay an address it doesn't allow. No wallet needed.",
+      "The key is born in a TEE and can only sign what your rules permit. The rules aren't for you — they're for whoever gets in.",
   },
 };
 
