@@ -27,10 +27,11 @@ export default function AppHome() {
     const locals = listAccounts(address);
     const enriched = await Promise.all(
       locals.map(async (a) => {
-        const [rule, xrplAddress] = await Promise.all([
-          publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ruleOf", args: [a.walletId] }) as Promise<`0x${string}`>,
-          publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [a.walletId] }) as Promise<string>,
-        ]);
+        const rule = (await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ruleOf", args: [a.walletId] })) as `0x${string}`;
+        // xrplAddressOf only exists on the writeback contract; tolerate its absence.
+        const xrplAddress = (await publicClient
+          .readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [a.walletId] })
+          .catch(() => "")) as string;
         return { ...a, rule, xrplAddress };
       }),
     );

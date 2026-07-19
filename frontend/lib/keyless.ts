@@ -232,6 +232,9 @@ export const ACCOUNTS_ABI = [
   { type: "error", name: "NoTeeMachines", inputs: [] },
   { type: "error", name: "WalletExists", inputs: [] },
   { type: "error", name: "NotWalletOwner", inputs: [] },
+  // Raised by every rule when it refuses a payment — carries the human reason ("recipient not allowed",
+  // "over cap", …). Included here so viem can decode the refusal that bubbles up through pay().
+  { type: "error", name: "Rejected", inputs: [{ name: "reason", type: "string" }] },
   {
     type: "error",
     name: "InsufficientFee",

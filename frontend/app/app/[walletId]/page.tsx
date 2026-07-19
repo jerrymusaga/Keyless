@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useState } from "react";
-import { toHex } from "viem";
+import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig } from "@/components/app/RuleConfig";
 import { Button, Card, Field, Input, Notice, Spinner } from "@/components/app/ui";
@@ -37,11 +37,14 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   const [loading, setLoading] = useState(true);
 
   const readChain = useCallback(async () => {
-    const [o, r, x] = await Promise.all([
+    const [o, r] = await Promise.all([
       publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ownerOf", args: [wid] }) as Promise<string>,
       publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ruleOf", args: [wid] }) as Promise<`0x${string}`>,
-      publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [wid] }) as Promise<string>,
     ]);
+    // xrplAddressOf only exists on the writeback contract; tolerate its absence so the page still renders.
+    const x = await publicClient
+      .readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [wid] })
+      .catch(() => "") as string;
     setOwner(o);
     setRule(r);
     setXrpl(x);
@@ -200,9 +203,18 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
       setMsg({ tone: "info", text: "Authorized. The enclave is signing and submitting to XRPL — your balance updates in a few seconds." });
       setTo(""); setAmount("");
     } catch (e) {
-      // The rule reverted, or the fee was short. Surface the reason.
-      const raw = e instanceof Error ? e.message : String(e);
-      const reason = /Rejected\("?([^")]+)"?\)/.exec(raw)?.[1] ?? raw.split("\n")[0];
+      // The rule reverted, or the fee was short. Decode the rule's Rejected(reason) if present.
+      let reason = "the rule refused this payment";
+      if (e instanceof BaseError) {
+        const rev = e.walk((err) => err instanceof ContractFunctionRevertedError);
+        if (rev instanceof ContractFunctionRevertedError) {
+          reason = (rev.data?.args?.[0] as string) ?? rev.reason ?? rev.shortMessage ?? reason;
+        } else {
+          reason = e.shortMessage ?? reason;
+        }
+      } else if (e instanceof Error) {
+        reason = e.message.split("\n")[0];
+      }
       setMsg({ tone: "error", text: `Refused: ${reason}` });
     } finally {
       setBusy(false);
