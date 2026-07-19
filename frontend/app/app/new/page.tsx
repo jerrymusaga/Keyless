@@ -100,7 +100,7 @@ export default function NewAccount() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {ORDER.map((k) => {
               const meta = RULE_META[k];
-              const disabled = RULES[k] === ZERO_ADDRESS;
+              const disabled = (RULES[k] as string) === ZERO_ADDRESS;
               const active = rule === k;
               return (
                 <button

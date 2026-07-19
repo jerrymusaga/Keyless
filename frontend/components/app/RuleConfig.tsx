@@ -178,7 +178,10 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
   };
   return (
     <div className="space-y-4">
-      <Notice tone="info">Conditional payouts ship with the next deploy — this is a preview of the setup.</Notice>
+      <Notice tone="info">
+        Set the payee, cap, and condition here. Funds stay locked until someone submits a Flare Data
+        Connector proof of the condition (proof submission is an advanced step, done outside this form).
+      </Notice>
       <Field label="Payee"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
       <Field label="Cap"><Input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="100" inputMode="decimal" /></Field>
       <Field label="Release condition" hint="Hashed on-chain. Unlocks when Flare's Data Connector attests it.">
