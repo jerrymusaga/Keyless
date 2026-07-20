@@ -181,6 +181,21 @@ export const ACCOUNTS_ABI = [
   },
   {
     type: "function",
+    name: "isLocked",
+    stateMutability: "view",
+    inputs: [{ type: "bytes32" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "lockRule",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "walletId", type: "bytes32" }],
+    outputs: [],
+  },
+  { type: "error", name: "Locked", inputs: [] },
+  {
+    type: "function",
     name: "reportXrplAddress",
     stateMutability: "nonpayable",
     inputs: [{ name: "walletId", type: "bytes32" }, { name: "xrplAddress", type: "string" }],
