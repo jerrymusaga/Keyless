@@ -36,7 +36,11 @@ export async function POST(req: Request) {
   // Ask the enclave for this wallet's r-address (generated in-enclave by INIT).
   let xrplAddress: string | undefined;
   try {
-    const res = await fetch(`${enclaveUrl.replace(/\/$/, "")}/state`, { cache: "no-store" });
+    const res = await fetch(`${enclaveUrl.replace(/\/$/, "")}/state`, {
+      cache: "no-store",
+      // ngrok serves a browser-warning interstitial to non-browser fetches without this header.
+      headers: { "ngrok-skip-browser-warning": "true" },
+    });
     const body = (await res.json()) as StateResponse;
     const wallets = body.state?.wallets ?? {};
     xrplAddress = wallets[walletId.toLowerCase()] ?? wallets[walletId] ?? body.state?.xrplAddress;
