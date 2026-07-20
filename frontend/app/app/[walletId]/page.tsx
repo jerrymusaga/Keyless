@@ -123,6 +123,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
               )}
             </div>
           </Card>
+          <TestPanel walletId={wid} rule={rule} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
           {!locked && <LockPanel walletId={wid} rule={rule} onLocked={readChain} />}
         </>
@@ -283,6 +284,50 @@ function LockPanel({ walletId, rule, onLocked }: { walletId: `0x${string}`; rule
         )}
       </div>
       {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}
+    </Card>
+  );
+}
+
+function TestPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${string}` }) {
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
+
+  const test = async () => {
+    if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
+    setBusy(true);
+    setResult(null);
+    const v = await dryRunAuthorize(rule, walletId, to.trim(), BigInt(Math.round(n * 1e6)));
+    setResult({ ok: v.allowed, reason: v.reason, label: `${n} XRP → ${addr(to.trim())}` });
+    setBusy(false);
+  };
+
+  return (
+    <Card>
+      <h2 className="text-[15px] font-medium text-mist-100">Test a payment (dry-run)</h2>
+      <p className="mt-1 text-[13px] text-mist-400">
+        Check whether a payment would pass your rule — <span className="text-mist-200">without sending anything.</span>{" "}
+        It reads the real rule on-chain, so it&rsquo;s a safe way to sanity-check your setup before you fund or lock.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+        <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />
+        <div className="flex gap-2">
+          <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
+          <Button variant="ghost" onClick={test} disabled={busy}>{busy ? "…" : "Test"}</Button>
+        </div>
+      </div>
+      {result && (
+        <div className="mt-3">
+          <Notice tone={result.ok ? "ok" : "error"}>
+            {result.ok
+              ? `✓ ${result.label} would be accepted — the enclave would sign it.`
+              : `✗ ${result.label} would be refused: “${result.reason ?? "not permitted"}”. Nothing would leave the account.`}
+          </Notice>
+        </div>
+      )}
     </Card>
   );
 }
