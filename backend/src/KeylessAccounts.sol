@@ -69,6 +69,10 @@ contract KeylessAccounts {
     /// @notice How many accounts have ever been created. A cheap O(1) counter so a UI can show network
     ///         stats without scanning logs (the public RPC caps getLogs at 30 blocks).
     uint256 public walletCount;
+
+    /// @notice How many accounts currently have a rule set (rule != 0). Tracked on the rule transition
+    ///         in setRule, so "active" = configured and able to spend.
+    uint256 public activeCount;
     /// @notice walletId => whether its rule is locked. A locked wallet's rule can never be repointed or
     ///         reconfigured — not even by the owner. One-way and permanent by design: if the owner could
     ///         unlock it, so could a stolen control key, which is the exact thing lock defends against.
@@ -155,6 +159,17 @@ contract KeylessAccounts {
     /// @notice Point a wallet at a spending rule (the wallet's entire security surface).
     function setRule(bytes32 walletId, address rule) external onlyWalletOwner(walletId) {
         if (locked[walletId]) revert Locked();
+        address prev = ruleOf[walletId];
+        // Keep activeCount = number of wallets with a non-zero rule, updated only on the transition.
+        if (prev == address(0) && rule != address(0)) {
+            unchecked {
+                ++activeCount;
+            }
+        } else if (prev != address(0) && rule == address(0)) {
+            unchecked {
+                --activeCount;
+            }
+        }
         ruleOf[walletId] = rule;
         emit RuleSet(walletId, rule);
     }

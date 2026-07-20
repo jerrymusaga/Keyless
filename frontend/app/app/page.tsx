@@ -150,7 +150,7 @@ function AccountRow({ row }: { row: Row }) {
 }
 
 function StatsBar() {
-  const [s, setS] = useState<{ available: boolean; totalAccounts?: number } | null>(null);
+  const [s, setS] = useState<{ available: boolean; totalAccounts?: number; activeAccounts?: number } | null>(null);
 
   useEffect(() => {
     fetch("/api/stats", { cache: "no-store" })
@@ -159,18 +159,21 @@ function StatsBar() {
       .catch(() => {});
   }, []);
 
-  // Hide entirely until the contract exposes the counter (pre-redeploy), so we never show a broken bar.
+  // Hide entirely until the contract exposes the counters (pre-redeploy), so we never show a broken bar.
   if (s && !s.available) return null;
 
+  const stat = (value: number | undefined, label: string) => (
+    <div className="flex-1 px-5 py-4">
+      <div className="font-mono text-2xl text-mist-100">{value === undefined ? "—" : value.toLocaleString()}</div>
+      <div className="mt-0.5 text-[12px] text-mist-400">{label}</div>
+    </div>
+  );
+
   return (
-    <div className="mt-6 flex items-center gap-4 rounded-xl border hairline bg-ink-900/50 px-5 py-4">
-      <div className="font-mono text-2xl text-mist-100">
-        {s?.totalAccounts === undefined ? "—" : s.totalAccounts.toLocaleString()}
-      </div>
-      <div className="text-[13px] text-mist-400">
-        Keyless accounts created on Coston2
-        <span className="ml-2 font-mono text-[11px] text-mist-500">(live, on-chain)</span>
-      </div>
+    <div className="mt-6 flex items-center divide-x divide-ink-800 rounded-xl border hairline bg-ink-900/50">
+      {stat(s?.totalAccounts, "Accounts created")}
+      {stat(s?.activeAccounts, "Active (with a rule)")}
+      <div className="hidden px-5 text-[11px] text-mist-500 sm:block">live on Coston2</div>
     </div>
   );
 }

@@ -72,6 +72,21 @@ contract KeylessAccountsTest is Test {
         assertEq(accounts.walletCount(), 2);
     }
 
+    function test_activeCount_tracksRuleTransitions() public {
+        bytes32 id = _wallet(alice, "a");
+        AllowlistRule rule = new AllowlistRule(address(accounts));
+        assertEq(accounts.activeCount(), 0);
+
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        assertEq(accounts.activeCount(), 1, "first rule -> active");
+        accounts.setRule(id, address(rule)); // same non-zero rule: no double count
+        assertEq(accounts.activeCount(), 1, "re-set does not double count");
+        accounts.setRule(id, address(0)); // clear the rule
+        assertEq(accounts.activeCount(), 0, "cleared -> inactive");
+        vm.stopPrank();
+    }
+
     function test_pay_revertsWithoutRule() public {
         bytes32 id = _wallet(alice, "main");
         vm.expectRevert(KeylessAccounts.NoRule.selector);
