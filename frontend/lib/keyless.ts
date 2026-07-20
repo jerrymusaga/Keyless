@@ -30,8 +30,8 @@ export const ADDRESSES = {
   /** Flare's TEE manager diamond. Not ours — Flare's system contract. */
   teeManager: "0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F",
   /** KeylessAccounts — the multi-tenant manager, and the extension's sole instructionsSender.
-   *  Every wallet's key obeys this contract and nothing else. (Writeback build, bound on ext 454.) */
-  accounts: "0x4fF3BbE93b7F628CDd7bF2182f80CF0539dBc34e",
+   *  Every wallet's key obeys this contract and nothing else. (Writeback + lockable rules, bound on 454.) */
+  accounts: "0x870456e4e13461850D8e7E4b749BE8881A99a266",
   /** Legacy single-wallet demo policy. Still deployed; the live "refuse" demo runs its allowlist
    *  check against it (a real on-chain revert) until the interactive demo is moved to `accounts`. */
   policy: "0x3CC32eB5d7ef1751f1fd0b81DdEBcca382bf586d",
@@ -45,10 +45,10 @@ export const ADDRESSES = {
  *  but ships with the next full redeploy, so its address is the zero address until then — the UI treats
  *  a zero-address rule as "available soon" and won't let a wallet point at it. */
 export const RULES = {
-  allowlist: "0x7d2B50450927bF9A0A72fFf05d294062D8A2A6ba",
-  rateLimit: "0x5DAdd67d21330153CaA2fF5dB3a0Ce96786f9eb8",
-  subscription: "0x628812BE85aC3fe49bfC6b3aD3F26d0097a07667",
-  escrow: "0x018aC1f307d6b2FD1426458Df4d32e306660398a",
+  allowlist: "0x02094bbE30C33361315959a77003F9856163F40C",
+  rateLimit: "0x60c9Fec17e077bC711A138b85dBd552109E552c9",
+  subscription: "0xa190C9Ac3aED7E7BaFaCa9292dd9a7130e77f9F1",
+  escrow: "0x824e88CE4fF25f4B0d0F4517c571A965Efb5800e",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -214,6 +214,20 @@ export const ACCOUNTS_ABI = [
     name: "setRule",
     stateMutability: "nonpayable",
     inputs: [{ name: "walletId", type: "bytes32" }, { name: "rule", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "isLocked",
+    stateMutability: "view",
+    inputs: [{ type: "bytes32" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "lockRule",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "walletId", type: "bytes32" }],
     outputs: [],
   },
   {

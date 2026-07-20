@@ -13,6 +13,7 @@ abstract contract KeylessRuleBase is IKeylessRule {
 
     error NotAccounts();
     error NotWalletOwner();
+    error Locked();
     error Rejected(string reason);
 
     constructor(address _accounts) {
@@ -29,6 +30,15 @@ abstract contract KeylessRuleBase is IKeylessRule {
     /// @dev Config setters are gated to the wallet's owner (as recorded by the manager).
     modifier onlyWalletOwner(bytes32 walletId) {
         if (msg.sender != accounts.ownerOf(walletId)) revert NotWalletOwner();
+        _;
+    }
+
+    /// @dev Config setters must also refuse to change a locked wallet's rule — otherwise a stolen
+    ///      control key could just widen the existing rule (e.g. allowlist the attacker) instead of
+    ///      repointing it. `authorize` is deliberately NOT gated by this: a locked wallet must keep
+    ///      spending under its frozen rule.
+    modifier notLocked(bytes32 walletId) {
+        if (accounts.isLocked(walletId)) revert Locked();
         _;
     }
 }

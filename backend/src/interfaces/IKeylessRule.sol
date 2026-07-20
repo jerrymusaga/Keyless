@@ -24,8 +24,10 @@ interface IKeylessRule {
 }
 
 /// @title IKeylessAccounts
-/// @notice The slice of the account manager a rule needs: who owns a wallet (so a rule's config
-///         setters can be gated to that owner).
+/// @notice The slice of the account manager a rule needs: who owns a wallet (so a rule's config setters
+///         can be gated to that owner), and whether the wallet is locked (so those setters can refuse to
+///         change a frozen rule).
 interface IKeylessAccounts {
     function ownerOf(bytes32 walletId) external view returns (address);
+    function isLocked(bytes32 walletId) external view returns (bool);
 }

@@ -34,6 +34,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   const [owner, setOwner] = useState<string | null>(null);
   const [rule, setRule] = useState<`0x${string}` | null>(null);
   const [xrpl, setXrpl] = useState<string>("");
+  const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const readChain = useCallback(async () => {
@@ -41,13 +42,15 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
       publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ownerOf", args: [wid] }) as Promise<string>,
       publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ruleOf", args: [wid] }) as Promise<`0x${string}`>,
     ]);
-    // xrplAddressOf only exists on the writeback contract; tolerate its absence so the page still renders.
-    const x = await publicClient
-      .readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [wid] })
-      .catch(() => "") as string;
+    // xrplAddressOf / isLocked only exist on the newer contract; tolerate absence so the page renders.
+    const [x, l] = await Promise.all([
+      publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [wid] }).catch(() => "") as Promise<string>,
+      publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "isLocked", args: [wid] }).catch(() => false) as Promise<boolean>,
+    ]);
     setOwner(o);
     setRule(r);
     setXrpl(x);
+    setLocked(l);
     setLoading(false);
   }, [wid]);
 
@@ -91,6 +94,11 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
               {RULE_META[rk].name}
             </span>
           )}
+          {locked && (
+            <span className="rounded-full border border-allow-500/40 bg-allow-500/10 px-2.5 py-0.5 text-[11px] text-allow-500">
+              🔒 rule locked
+            </span>
+          )}
         </div>
       </div>
 
@@ -103,10 +111,19 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
             <p className="mt-1 text-[13px] text-mist-400">{RULE_META[rk].tagline}</p>
             <p className="mt-1 text-xs text-signal-300/80">Protects against: {RULE_META[rk].protects}</p>
             <div className="mt-5 border-t hairline pt-5">
-              <RuleConfig walletId={wid} ruleKey={rk} />
+              {locked ? (
+                <Notice tone="ok">
+                  This rule is <span className="font-medium">locked forever</span>. Its pointer and settings
+                  can never change — not even with your control key. That&rsquo;s why this account can&rsquo;t
+                  be drained even if the key is stolen: it can only ever keep doing exactly what it does now.
+                </Notice>
+              ) : (
+                <RuleConfig walletId={wid} ruleKey={rk} />
+              )}
             </div>
           </Card>
           <SpendPanel walletId={wid} xrpl={xrpl} />
+          {!locked && <LockPanel walletId={wid} onLocked={readChain} />}
         </>
       ) : (
         <Notice tone="warn">This account has no rule yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
@@ -177,6 +194,49 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
           </ul>
         </div>
       )}
+    </Card>
+  );
+}
+
+function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: () => void }) {
+  const { write } = useKeyless();
+  const [arming, setArming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const lock = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "lockRule", args: [walletId] });
+      onLocked();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message.split("\n")[0] : String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="border-allow-500/20">
+      <h2 className="text-[15px] font-medium text-mist-100">Lock this rule</h2>
+      <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
+        Freeze the rule <span className="text-mist-200">permanently</span>. After this, the rule and its
+        settings can never change — not even with your control key. Even if your key is stolen, the account
+        can only keep doing exactly what it does now. Best for savings / exchange-only accounts you
+        won&rsquo;t edit again. <span className="text-mist-300">There is no unlock.</span>
+      </p>
+      <div className="mt-4">
+        {!arming ? (
+          <Button variant="ghost" onClick={() => setArming(true)}>Lock rule permanently</Button>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Sure?</span>
+            <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
+            <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>Cancel</Button>
+          </div>
+        )}
+      </div>
+      {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}
     </Card>
   );
 }

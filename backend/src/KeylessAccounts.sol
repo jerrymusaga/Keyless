@@ -65,11 +65,16 @@ contract KeylessAccounts {
     /// @notice walletId => the enclave-generated XRPL r-address (its deposit address). Empty until the
     ///         enclave reporter records it, shortly after createWallet.
     mapping(bytes32 => string) public xrplAddressOf;
+    /// @notice walletId => whether its rule is locked. A locked wallet's rule can never be repointed or
+    ///         reconfigured — not even by the owner. One-way and permanent by design: if the owner could
+    ///         unlock it, so could a stolen control key, which is the exact thing lock defends against.
+    mapping(bytes32 => bool) public locked;
 
     uint256 private _lock;
 
     event WalletCreated(bytes32 indexed walletId, address indexed owner, bytes32 initInstructionId);
     event RuleSet(bytes32 indexed walletId, address indexed rule);
+    event RuleLocked(bytes32 indexed walletId, address indexed rule);
     event XrplAddressReported(bytes32 indexed walletId, string xrplAddress);
     event PaymentAuthorized(
         bytes32 indexed walletId, bytes32 indexed instructionId, string recipient, uint256 amount
@@ -83,6 +88,7 @@ contract KeylessAccounts {
     error NoTeeMachines();
     error InsufficientFee(uint256 required, uint256 provided);
     error Reentrancy();
+    error Locked();
 
     constructor(IFlareTeeManager _teeManager, uint256 _extensionId, address _claimBack, address _reporter) {
         teeManager = _teeManager;
@@ -134,10 +140,30 @@ contract KeylessAccounts {
         emit WalletCreated(walletId, msg.sender, iid);
     }
 
+    /// @notice True if the wallet's rule is locked (frozen forever).
+    function isLocked(bytes32 walletId) external view returns (bool) {
+        return locked[walletId];
+    }
+
     /// @notice Point a wallet at a spending rule (the wallet's entire security surface).
     function setRule(bytes32 walletId, address rule) external onlyWalletOwner(walletId) {
+        if (locked[walletId]) revert Locked();
         ruleOf[walletId] = rule;
         emit RuleSet(walletId, rule);
+    }
+
+    /// @notice Permanently freeze this wallet's rule and its configuration. After this, neither the rule
+    ///         pointer nor the rule's own settings (allowlist entries, caps, …) can ever change — the
+    ///         rule modules check `isLocked` in their config setters too. One-way: there is no unlock.
+    ///
+    /// @dev This is what makes "can't be drained" hold even against a stolen control key: on a locked
+    ///      wallet, an attacker with the owner key cannot repoint the rule or widen it, so the account
+    ///      can only ever keep doing exactly what it already does. Best for savings / exchange-only
+    ///      wallets you don't need to edit; leave flexible wallets (agents) unlocked.
+    function lockRule(bytes32 walletId) external onlyWalletOwner(walletId) {
+        if (ruleOf[walletId] == address(0)) revert NoRule(); // locking a ruleless wallet would brick it
+        locked[walletId] = true;
+        emit RuleLocked(walletId, ruleOf[walletId]);
     }
 
     /// @notice Record a wallet's enclave-generated XRPL address. Callable ONLY by the enclave reporter,

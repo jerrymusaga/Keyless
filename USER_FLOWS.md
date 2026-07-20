@@ -174,6 +174,30 @@ rule. Anyone can write one.
 
 ---
 
+## Protecting the control key — and locking a rule
+
+Your control key can *edit rules*. So it's fair to ask: if someone steals it, can they change a rule
+and drain the account? Honestly — **for an unlocked account, yes**: a thief with your control key could
+repoint the rule (or widen the allowlist) and then pay themselves. The control key is the account's admin,
+and it's now the thing worth guarding.
+
+Two things address this:
+
+1. **Lock the rule (on the dashboard).** Any account can **permanently freeze** its rule. Once locked,
+   the rule pointer *and* its settings can never change — **not even with your control key**. A stolen
+   key becomes useless against a locked account: it can't repoint the rule, can't add an address, can't
+   drain. The account can only ever keep doing exactly what it does now.
+   - One-way and permanent (if you could unlock it, so could a thief). No unlock.
+   - Perfect for **savings / exchange-only** accounts you won't edit again. Leave **flexible** accounts
+     (an agent wallet you keep tuning) unlocked — for those, guard the control key and back it up.
+   - Locking a subscription/escrow makes it permanent (uncancellable), so only lock what you mean to fix.
+
+2. **Back up and protect the control key.** Export it (Your accounts → control key), store it somewhere
+   only you control, and treat it like a vault admin key — because that's what it is.
+
+The honest summary: **locking makes an account undrainable even against control-key theft; for unlocked
+accounts, the control key is the thing to protect.**
+
 ## The pattern behind all of them
 
 Every template is the same machine seen from a different angle:

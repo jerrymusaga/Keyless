@@ -34,6 +34,7 @@ contract SubscriptionRule is KeylessRuleBase {
     function configure(bytes32 walletId, string calldata merchant, uint256 maxPerPeriod, uint64 period)
         external
         onlyWalletOwner(walletId)
+        notLocked(walletId)
     {
         if (period == 0) revert Rejected("period is zero");
         planOf[walletId] = Plan({
@@ -47,8 +48,9 @@ contract SubscriptionRule is KeylessRuleBase {
         emit PlanConfigured(walletId, merchant, maxPerPeriod, period);
     }
 
-    /// @notice Stop the subscription. The merchant can pull nothing further.
-    function cancel(bytes32 walletId) external onlyWalletOwner(walletId) {
+    /// @notice Stop the subscription. The merchant can pull nothing further. (Blocked once the wallet is
+    ///         locked — locking a subscription makes it permanent, so lock only accounts you won't cancel.)
+    function cancel(bytes32 walletId) external onlyWalletOwner(walletId) notLocked(walletId) {
         planOf[walletId].active = false;
         emit PlanCancelled(walletId);
     }

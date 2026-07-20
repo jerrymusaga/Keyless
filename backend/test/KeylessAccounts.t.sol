@@ -311,6 +311,59 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, EXCHANGE, 1, bytes32("e2"));
     }
 
+    // --- lockable rules: undrainable even against a stolen control key ---------
+
+    function _lockedExchangeWallet() internal returns (bytes32 id, AllowlistRule rule) {
+        id = _wallet(alice, "savings");
+        rule = new AllowlistRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allow(id, EXCHANGE);
+        accounts.lockRule(id);
+        vm.stopPrank();
+    }
+
+    function test_lock_requiresRule_andOnlyOwner() public {
+        bytes32 id = _wallet(alice, "savings");
+        // can't lock a wallet with no rule (would brick it)
+        vm.prank(alice);
+        vm.expectRevert(KeylessAccounts.NoRule.selector);
+        accounts.lockRule(id);
+
+        AllowlistRule rule = new AllowlistRule(address(accounts));
+        vm.prank(alice);
+        accounts.setRule(id, address(rule));
+        // a stranger cannot lock someone else's wallet
+        vm.prank(bob);
+        vm.expectRevert(KeylessAccounts.NotWalletOwner.selector);
+        accounts.lockRule(id);
+    }
+
+    /// @notice THE control-key defense: once locked, even the owner key (i.e. a thief holding it) cannot
+    ///         repoint the rule or widen the allowlist — so the account can only keep paying the exchange.
+    function test_lock_defeatsStolenControlKey_butKeepsPaying() public {
+        (bytes32 id, AllowlistRule rule) = _lockedExchangeWallet();
+        assertTrue(accounts.isLocked(id));
+
+        // attacker holds Alice's control key. Every path to redirect funds is frozen:
+        AllowlistRule evil = new AllowlistRule(address(accounts));
+        vm.startPrank(alice);
+        vm.expectRevert(KeylessAccounts.Locked.selector);
+        accounts.setRule(id, address(evil)); // can't repoint to a permissive rule
+        vm.expectRevert(KeylessRuleBase.Locked.selector);
+        rule.allow(id, ATTACKER); // can't widen the existing allowlist
+        vm.stopPrank();
+
+        // draining to the attacker is still refused...
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, ATTACKER, 5_000_000, bytes32("steal"));
+
+        // ...while the account keeps working exactly as before: it still pays the exchange.
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("ok"));
+        assertEq(tee.lastRecipient(), EXCHANGE);
+        assertEq(tee.lastAmount(), 5_000_000);
+    }
+
     function test_escrow_ownerCancelsAndOnlyOwnerConfigures() public {
         MockFdcVerification fdc = new MockFdcVerification();
         FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));

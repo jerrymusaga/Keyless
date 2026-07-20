@@ -49,6 +49,7 @@ contract FdcEscrowRule is KeylessRuleBase {
     function configure(bytes32 walletId, string calldata recipient, uint256 maxAmount, bytes32 conditionHash)
         external
         onlyWalletOwner(walletId)
+        notLocked(walletId)
     {
         if (maxAmount == 0) revert Rejected("zero cap");
         if (conditionHash == bytes32(0)) revert Rejected("no condition");
@@ -77,7 +78,8 @@ contract FdcEscrowRule is KeylessRuleBase {
     }
 
     /// @notice Cancel the escrow at any time. The wallet can pay nothing further under this rule.
-    function cancel(bytes32 walletId) external onlyWalletOwner(walletId) {
+    ///         (Blocked once the wallet is locked.)
+    function cancel(bytes32 walletId) external onlyWalletOwner(walletId) notLocked(walletId) {
         escrowOf[walletId].active = false;
         emit EscrowCancelled(walletId);
     }

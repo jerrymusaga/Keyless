@@ -32,12 +32,20 @@ contract RateLimitRule is KeylessRuleBase {
 
     constructor(address _accounts) KeylessRuleBase(_accounts) {}
 
-    function allow(bytes32 walletId, string calldata recipient) external onlyWalletOwner(walletId) {
+    function allow(bytes32 walletId, string calldata recipient)
+        external
+        onlyWalletOwner(walletId)
+        notLocked(walletId)
+    {
         allowed[walletId][keccak256(bytes(recipient))] = true;
         emit RecipientAllowed(walletId, recipient);
     }
 
-    function remove(bytes32 walletId, string calldata recipient) external onlyWalletOwner(walletId) {
+    function remove(bytes32 walletId, string calldata recipient)
+        external
+        onlyWalletOwner(walletId)
+        notLocked(walletId)
+    {
         allowed[walletId][keccak256(bytes(recipient))] = false;
         emit RecipientRemoved(walletId, recipient);
     }
@@ -46,6 +54,7 @@ contract RateLimitRule is KeylessRuleBase {
     function configure(bytes32 walletId, uint256 maxPerPeriod, uint64 period)
         external
         onlyWalletOwner(walletId)
+        notLocked(walletId)
     {
         if (period == 0) revert Rejected("period is zero");
         Limit storage l = limitOf[walletId];
