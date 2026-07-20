@@ -124,3 +124,30 @@ keys"** — a second act, not a competing message.
 - **Route B:** does the FCE extension let our machine attest an **EVM signing key** alongside the XRP one,
   or does that need a second extension / key type? (Validate against the manager's supported signing algos.)
 - Both change the enclave image → both need a re-attestation + redeploy. Batch them.
+
+---
+
+## Adjacent: FXRP via mint-to-tag (the on-ramp for Route B)
+
+If Keyless ever offers yield through **Flare DeFi** (not native XRPL AMM), the XRP has to become **FXRP**
+first. Flare's **FAssets v1.3 "mint-to-tag"** makes that a single tagged XRP payment, and it's
+**Kristaps's own feature** (@fassko) — so integrating it is both technically clean and politically smart.
+
+**How mint-to-tag works:** reserve a **destination tag** on Flare mapped to your Flare address (once) →
+send a normal XRP payment to the **FAssets Core Vault** carrying that tag/memo → an **executor** relays
+the **FDC proof** and calls `executeDirectMinting` → **FXRP lands at your Flare address.** No agent
+selection, no collateral reservation. It rides the tag/memo rails XRP already uses.
+
+**The Keyless fit:** a **"safe FXRP mint" rule** — an account whose rule only permits payments to the
+FAssets Core Vault with your tag. It can *only* mint FXRP to your own Flare address, never elsewhere.
+Keyless `pay` already carries a `paymentReference` (memo), so this is the same payment shape. Pitch:
+*"mint FXRP from an XRP account that can't be drained."*
+
+**Tension (must frame honestly):** minting FXRP **is** bridging XRP onto Flare — it contradicts the
+"native XRP, never bridged" headline. So this is an **opt-in adjacent capability** ("native by default;
+enter Flare's ecosystem safely when you choose"), never the core pitch.
+
+**Before building:** verify FAssets / mint-to-tag availability on **Coston2** (it launched on Songbird;
+confirm testnet reach). Verdict: strong integration + validation angle (plugs into Flare's flagship XRP
+product), but adjacent — don't let it derail the core undrainable-account loop. Full note:
+`memory/flare-mint-to-tag-fxrp.md`.
