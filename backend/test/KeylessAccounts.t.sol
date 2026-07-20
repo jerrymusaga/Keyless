@@ -65,6 +65,13 @@ contract KeylessAccountsTest is Test {
         accounts.createWallet{value: FEE}("main");
     }
 
+    function test_walletCount_increments() public {
+        assertEq(accounts.walletCount(), 0);
+        _wallet(alice, "a");
+        _wallet(bob, "b");
+        assertEq(accounts.walletCount(), 2);
+    }
+
     function test_pay_revertsWithoutRule() public {
         bytes32 id = _wallet(alice, "main");
         vm.expectRevert(KeylessAccounts.NoRule.selector);

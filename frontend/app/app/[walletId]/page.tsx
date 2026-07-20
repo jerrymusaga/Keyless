@@ -8,6 +8,7 @@ import { Button, Card, Field, Input, Notice, Spinner } from "@/components/app/ui
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
 import { getXrplBalance, getRecentPayments, type XrplTx } from "@/lib/xrpl";
+import { dryRunAuthorize } from "@/lib/showcase";
 import {
   ADDRESSES,
   ACCOUNTS_ABI,
@@ -123,7 +124,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
             </div>
           </Card>
           <SpendPanel walletId={wid} xrpl={xrpl} />
-          {!locked && <LockPanel walletId={wid} onLocked={readChain} />}
+          {!locked && <LockPanel walletId={wid} rule={rule} onLocked={readChain} />}
         </>
       ) : (
         <Notice tone="warn">This account has no rule yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
@@ -198,11 +199,30 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
   );
 }
 
-function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: () => void }) {
+function LockPanel({ walletId, rule, onLocked }: { walletId: `0x${string}`; rule: `0x${string}`; onLocked: () => void }) {
   const { write } = useKeyless();
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
   const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Safety rail: you can't lock until a payment you expect to work actually passes the real rule.
+  // A locked rule that authorizes nothing would strand the funds forever — so we make you prove a
+  // working path first (a read-only dry-run against the live rule; nothing is spent).
+  const test = async () => {
+    if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
+    setTesting(true);
+    setTested(null);
+    setArming(false);
+    const v = await dryRunAuthorize(rule, walletId, to.trim(), BigInt(Math.round(n * 1e6)));
+    setTested({ ok: v.allowed, reason: v.reason, label: `${n} XRP → ${addr(to.trim())}` });
+    setTesting(false);
+  };
 
   const lock = async () => {
     setBusy(true);
@@ -221,19 +241,45 @@ function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: 
       <h2 className="text-[15px] font-medium text-mist-100">Lock this rule</h2>
       <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
         Freeze the rule <span className="text-mist-200">permanently</span>. After this, the rule and its
-        settings can never change — not even with your control key. Even if your key is stolen, the account
-        can only keep doing exactly what it does now. Best for savings / exchange-only accounts you
-        won&rsquo;t edit again. <span className="text-mist-300">There is no unlock.</span>
+        settings can never change — not even with your control key, and not even if it&rsquo;s stolen.
+        Best for savings / exchange-only accounts you won&rsquo;t edit again.{" "}
+        <span className="text-mist-300">There is no unlock.</span>
       </p>
-      <div className="mt-4">
-        {!arming ? (
-          <Button variant="ghost" onClick={() => setArming(true)}>Lock rule permanently</Button>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Sure?</span>
-            <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
-            <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>Cancel</Button>
+
+      <div className="mt-4 rounded-lg border hairline bg-ink-950/50 p-4">
+        <p className="text-[12px] text-mist-400">
+          First, prove a payment you expect to work still passes — otherwise you could freeze the account
+          with no way to spend. This is a dry-run against the real rule; nothing is sent.
+        </p>
+        <div className="mt-2.5 flex gap-2">
+          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="A recipient that should be allowed" className="text-[12px]" />
+          <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-20 text-[12px]" />
+          <Button variant="ghost" onClick={test} disabled={testing}>{testing ? "…" : "Test"}</Button>
+        </div>
+        {tested && (
+          <div className="mt-3">
+            <Notice tone={tested.ok ? "ok" : "error"}>
+              {tested.ok
+                ? `✓ ${tested.label} passes. It's safe to lock — this path keeps working forever.`
+                : `✗ ${tested.label} is refused (“${tested.reason ?? "not permitted"}”). Fix the rule before locking, or the account could be stranded.`}
+            </Notice>
           </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        {tested?.ok ? (
+          !arming ? (
+            <Button variant="ghost" onClick={() => setArming(true)}>Lock rule permanently</Button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Sure?</span>
+              <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
+              <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>Cancel</Button>
+            </div>
+          )
+        ) : (
+          <p className="text-[12px] text-mist-500">Run a passing test above to enable locking.</p>
         )}
       </div>
       {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}

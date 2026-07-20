@@ -65,6 +65,10 @@ contract KeylessAccounts {
     /// @notice walletId => the enclave-generated XRPL r-address (its deposit address). Empty until the
     ///         enclave reporter records it, shortly after createWallet.
     mapping(bytes32 => string) public xrplAddressOf;
+
+    /// @notice How many accounts have ever been created. A cheap O(1) counter so a UI can show network
+    ///         stats without scanning logs (the public RPC caps getLogs at 30 blocks).
+    uint256 public walletCount;
     /// @notice walletId => whether its rule is locked. A locked wallet's rule can never be repointed or
     ///         reconfigured — not even by the owner. One-way and permanent by design: if the owner could
     ///         unlock it, so could a stolen control key, which is the exact thing lock defends against.
@@ -136,6 +140,9 @@ contract KeylessAccounts {
         walletId = walletIdFor(msg.sender, salt);
         if (ownerOf[walletId] != address(0)) revert WalletExists();
         ownerOf[walletId] = msg.sender;
+        unchecked {
+            ++walletCount;
+        }
         bytes32 iid = _send(OP_INIT, abi.encode(walletId));
         emit WalletCreated(walletId, msg.sender, iid);
     }

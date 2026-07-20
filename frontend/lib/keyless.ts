@@ -151,6 +151,7 @@ export const POLICY_ABI = [
 export const ACCOUNTS_ABI = [
   { type: "function", name: "isBound", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   { type: "function", name: "extensionId", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "walletCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   {
     type: "function",
     name: "walletIdFor",

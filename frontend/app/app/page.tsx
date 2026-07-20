@@ -80,6 +80,8 @@ export default function AppHome() {
         <Button href="/app/new">+ New account</Button>
       </div>
 
+      <StatsBar />
+
       {lowGas && (
         <div className="mt-6">
           <FundPrompt />
@@ -144,6 +146,32 @@ function AccountRow({ row }: { row: Row }) {
         <span className="text-mist-500">→</span>
       </div>
     </Link>
+  );
+}
+
+function StatsBar() {
+  const [s, setS] = useState<{ available: boolean; totalAccounts?: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stats", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setS(d))
+      .catch(() => {});
+  }, []);
+
+  // Hide entirely until the contract exposes the counter (pre-redeploy), so we never show a broken bar.
+  if (s && !s.available) return null;
+
+  return (
+    <div className="mt-6 flex items-center gap-4 rounded-xl border hairline bg-ink-900/50 px-5 py-4">
+      <div className="font-mono text-2xl text-mist-100">
+        {s?.totalAccounts === undefined ? "—" : s.totalAccounts.toLocaleString()}
+      </div>
+      <div className="text-[13px] text-mist-400">
+        Keyless accounts created on Coston2
+        <span className="ml-2 font-mono text-[11px] text-mist-500">(live, on-chain)</span>
+      </div>
+    </div>
   );
 }
 
