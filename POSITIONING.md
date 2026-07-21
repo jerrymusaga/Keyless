@@ -54,3 +54,49 @@ the ground where we're differentiated.
 
 Keep the core there. Treat FXRP as an optional exit ramp, only if there's spare time after the core is
 live and demoed.
+
+---
+
+## Revenue model
+
+Keyless charges a cut of the **flows it secures**, never a fee to "be safe" (bad look, hard to price).
+Fees stay off the trust path — a transparent on-chain fee on the payment, or a B2B plan beside it.
+
+Five layers, roughly in order of margin:
+
+1. **Enterprise plans (the money).** Businesses pay a subscription + volume tier for undrainable
+   **treasury, AI-agent, and escrow** accounts. High willingness to pay at the business level.
+2. **Licensing / white-label (the scale lever).** Wallets, exchanges, fintechs embed Keyless accounts
+   and pay a license or rev-share. Turns would-be competitors (wallets) into customers.
+3. **Take-rate on escrow / high-value flows (the first wedge).** A % of escrowed value or a flat fee per
+   release — how an escrow/payments processor earns. Tied to the delivery-escrow first-client use case,
+   which has a candidate customer and an obvious fee.
+4. **Developer API / platform.** Devs integrate Keyless policy-based signing into their apps.
+5. **Per-signature usage fee (baseline).** A tiny fee each time the enclave signs — usage-aligned floor
+   (reuses the existing `quoteFee` plumbing). Low margin on cheap XRP txns; it's the floor, not the play.
+
+Nuance: "premium templates" = **hosted / audited / supported** rules + UI + SLA, NOT gatekeeping the
+primitive (anyone can still write a rule) — otherwise it fights the open/composable story.
+
+## Long-term vision: the undrainable *policy engine* for XRP (integrate, don't compete)
+
+Reframe Keyless from "a wallet/product" to **the authorization layer wallets and apps integrate rather
+than compete with.** You stop being *a wallet* (competing with Xaman / Flare Smart Accounts) and become
+**the policy engine they call** — competitors become customers. Bigger TAM, more defensible, and it
+sidesteps the "isn't this just FSA?" problem.
+
+**Three caveats that keep it honest (do not lose these):**
+1. **Not open space — real incumbents.** Turnkey, Fireblocks, Privy, Dfns already sell "policy engine /
+   programmable signing for wallets & fintechs," well-funded. The edge is NOT the idea — it's the
+   specific guarantee (a TEE-held key that can't be drained even by its holder) on the chain they
+   underserve (XRP/XRPL).
+2. **The moat is chain-specific.** Per the top of this doc: the TEE only earns its keep where the chain
+   has no contracts (XRPL). On EVM, native AA already does policy-signing WITHOUT a TEE. So the
+   defensible framing is **"the policy engine for XRP / non-programmable chains,"** expanding carefully —
+   NOT "every chain," which throws away the moat.
+3. **Earn the platform, don't start there.** "Be the layer everyone integrates" is a destination reached
+   through a wedge use case (escrow / first client), one integration at a time — not a launch posture.
+
+**The reconciled one-liner:** *the undrainable policy engine for XRP — prove it with escrow + enterprise,
+become the layer XRP wallets and apps integrate, then expand to any chain where the key needs to be safer
+than its holder.* Same ambition, moat intact, anchored to the ground where the TEE actually matters.
