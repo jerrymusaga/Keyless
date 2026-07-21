@@ -29,6 +29,19 @@ contract AllowlistRule is KeylessRuleBase {
         emit RecipientAllowed(walletId, recipient);
     }
 
+    /// @notice Allowlist several recipients in one transaction — set up an exchange/savings account with
+    ///         all its deposit addresses at once instead of one tx each.
+    function allowMany(bytes32 walletId, string[] calldata recipients)
+        external
+        onlyWalletOwner(walletId)
+        notLocked(walletId)
+    {
+        for (uint256 i = 0; i < recipients.length; i++) {
+            allowed[walletId][keccak256(bytes(recipients[i]))] = true;
+            emit RecipientAllowed(walletId, recipients[i]);
+        }
+    }
+
     function remove(bytes32 walletId, string calldata recipient)
         external
         onlyWalletOwner(walletId)

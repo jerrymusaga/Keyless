@@ -51,19 +51,30 @@ function AllowlistConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const { busy, msg, run } = useConfigAction();
   const add = async () => {
-    try {
-      assertXrpl(addr);
-    } catch (e) {
-      return alert(e instanceof Error ? e.message : String(e));
-    }
-    const ok = await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allow", [walletId, addr.trim()], "Address allowlisted. The account can now pay it — and nowhere else.");
+    const list = addr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    if (list.length === 0) return alert("Enter at least one XRPL r-address.");
+    const bad = list.find((a) => !XRPL_ADDRESS_RE.test(a));
+    if (bad) return alert(`Not a valid XRPL r-address: ${bad}`);
+    const ok =
+      list.length === 1
+        ? await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allow", [walletId, list[0]], "Address allowlisted. The account can now pay it — and nowhere else.")
+        : await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allowMany", [walletId, list], `${list.length} addresses allowlisted in one transaction.`);
     if (ok) setAddr("");
   };
   return (
     <div className="space-y-4">
-      <Field label="Allow a recipient" hint="The account may only ever pay addresses on this list.">
-        <div className="flex gap-2">
-          <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rExchangeDeposit…" />
+      <Field
+        label="Allow recipients"
+        hint="The account may only ever pay addresses on this list. Paste several — one per line or comma-separated — to add them in a single transaction."
+      >
+        <textarea
+          value={addr}
+          onChange={(e) => setAddr(e.target.value)}
+          rows={3}
+          placeholder={"rExchangeDeposit…\nrAnotherDeposit…"}
+          className="w-full rounded-lg border hairline bg-ink-950 px-3.5 py-2.5 font-mono text-sm text-mist-100 outline-none transition-colors placeholder:text-mist-500 focus:border-signal-500/60"
+        />
+        <div className="mt-2">
           <Button onClick={add} disabled={busy}>{busy ? "…" : "Allow"}</Button>
         </div>
       </Field>

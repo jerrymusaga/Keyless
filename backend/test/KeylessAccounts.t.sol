@@ -161,6 +161,23 @@ contract KeylessAccountsTest is Test {
         assertEq(tee.instructionCount(), before, "no instruction may reach the enclave");
     }
 
+    function test_allowlist_allowMany_addsAllInOneTx() public {
+        bytes32 id = _wallet(alice, "exchange");
+        AllowlistRule rule = new AllowlistRule(address(accounts));
+        string[] memory recips = new string[](2);
+        recips[0] = EXCHANGE;
+        recips[1] = "rSecondExchangeDepositXXXXXXXXXXXXX";
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allowMany(id, recips);
+        vm.stopPrank();
+
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("a"));
+        assertEq(tee.lastRecipient(), EXCHANGE);
+        accounts.pay{value: FEE}(id, "rSecondExchangeDepositXXXXXXXXXXXXX", 1_000_000, bytes32("b"));
+        assertEq(tee.lastRecipient(), "rSecondExchangeDepositXXXXXXXXXXXXX");
+    }
+
     function test_allowlist_onlyOwnerConfigures() public {
         bytes32 id = _wallet(alice, "exchange");
         AllowlistRule rule = new AllowlistRule(address(accounts));

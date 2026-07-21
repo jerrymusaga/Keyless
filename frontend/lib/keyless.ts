@@ -278,6 +278,7 @@ export const ACCOUNTS_ABI = [
 export const RULE_ABIS = {
   allowlist: [
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "allowMany", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipients", type: "string[]" }], outputs: [] },
     { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "allowed", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes32" }], outputs: [{ type: "bool" }] },
   ],
