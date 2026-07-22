@@ -27,7 +27,9 @@ contract SetupDemo is Script {
         SubscriptionRule subscription = SubscriptionRule(vm.envAddress("SUBSCRIPTION_RULE"));
         FdcEscrowRule escrow = FdcEscrowRule(vm.envAddress("ESCROW_RULE"));
 
-        uint256 initFee = accounts.quoteFee(accounts.OP_INIT());
+        // Instruction fee to attach; excess refunds to claimBack. Override via INIT_FEE if the chain's
+        // fee differs. (The scaffold dropped on-chain fee quoting.)
+        uint256 initFee = vm.envOr("INIT_FEE", uint256(1000));
 
         vm.startBroadcast();
 

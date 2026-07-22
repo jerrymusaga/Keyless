@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
-import {IFlareTeeManager} from "./interfaces/IFlareTeeManager.sol";
+import {ITeeExtensionRegistry} from "./interfaces/ITeeExtensionRegistry.sol";
+import {ITeeMachineRegistry} from "./interfaces/ITeeMachineRegistry.sol";
 import {IKeylessRule} from "./interfaces/IKeylessRule.sol";
 
 /// @title KeylessAccounts
@@ -24,12 +25,15 @@ import {IKeylessRule} from "./interfaces/IKeylessRule.sol";
 ///
 ///      `pay` is permissionless: the RULE is the gate, not msg.sender. A rule that wants to restrict
 ///      who can spend enforces that itself.
+///
+///      TEE wiring (per the fce-sign scaffold): the registry split into an extension registry (send +
+///      id discovery) and a machine registry (machine selection). The extension id is NOT a constructor
+///      arg — it is assigned by the registry on registration and discovered once via `setExtensionId()`.
 contract KeylessAccounts {
-    /// @notice Flare's TEE manager diamond (Coston2: 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F).
-    IFlareTeeManager public immutable teeManager;
-
-    /// @notice Our FCE extension. Its machines obey this contract and nothing else.
-    uint256 public immutable extensionId;
+    /// @notice Flare's TEE extension registry — the only path from this contract to the enclave.
+    ITeeExtensionRegistry public immutable extensionRegistry;
+    /// @notice Flare's TEE machine registry — picks the machine that will act on an instruction.
+    ITeeMachineRegistry public immutable machineRegistry;
 
     /// @notice Where unspent instruction fees are refunded.
     address public immutable claimBackAddress;
@@ -41,6 +45,13 @@ contract KeylessAccounts {
     ///         dependency. The reporter can only *record* an address for an existing wallet — it has no
     ///         power over keys, rules, or funds.
     address public immutable enclaveReporter;
+
+    /// @notice Public extension ids start here; the registry reserves ids below this for system
+    ///         extensions. (Mirrors the scaffold's FIRST_PUBLIC_EXTENSION_ID.)
+    uint256 private constant FIRST_PUBLIC_EXTENSION_ID = 0x10000; // 65536
+
+    /// @notice This contract's extension id, discovered once via `setExtensionId()`. Zero until set.
+    uint256 private _extensionId;
 
     /// @notice Keyless's operation family. Deliberately NOT a system opType.
     bytes32 public constant OP_TYPE = bytes32("KEYLESS_XRP");
@@ -80,6 +91,7 @@ contract KeylessAccounts {
 
     uint256 private _lock;
 
+    event ExtensionIdSet(uint256 indexed extensionId);
     event WalletCreated(bytes32 indexed walletId, address indexed owner, bytes32 initInstructionId);
     event RuleSet(bytes32 indexed walletId, address indexed rule);
     event RuleLocked(bytes32 indexed walletId, address indexed rule);
@@ -94,13 +106,22 @@ contract KeylessAccounts {
     error WalletExists();
     error NoRule();
     error NoTeeMachines();
-    error InsufficientFee(uint256 required, uint256 provided);
     error Reentrancy();
     error Locked();
+    error ExtensionIdAlreadySet();
+    error ExtensionIdNotSet();
+    error ExtensionIdNotFound();
 
-    constructor(IFlareTeeManager _teeManager, uint256 _extensionId, address _claimBack, address _reporter) {
-        teeManager = _teeManager;
-        extensionId = _extensionId;
+    constructor(
+        ITeeExtensionRegistry _extensionRegistry,
+        ITeeMachineRegistry _machineRegistry,
+        address _claimBack,
+        address _reporter
+    ) {
+        require(address(_extensionRegistry) != address(0), "extensionRegistry is zero");
+        require(address(_machineRegistry) != address(0), "machineRegistry is zero");
+        extensionRegistry = _extensionRegistry;
+        machineRegistry = _machineRegistry;
         claimBackAddress = _claimBack == address(0) ? msg.sender : _claimBack;
         enclaveReporter = _reporter == address(0) ? msg.sender : _reporter;
     }
@@ -117,11 +138,40 @@ contract KeylessAccounts {
         _;
     }
 
+    // --- extension id discovery ---------------------------------------------
+
+    /// @notice Find and cache this contract's extension id — the one the registry bound to this address
+    ///         as its instructions sender. Call once, after the extension is registered. Idempotent
+    ///         guard: can only be set a single time.
+    function setExtensionId() external {
+        if (_extensionId != 0) revert ExtensionIdAlreadySet();
+        uint256 c = extensionRegistry.nextPublicExtensionId();
+        for (uint256 i = FIRST_PUBLIC_EXTENSION_ID; i < c; ++i) {
+            if (extensionRegistry.getTeeExtensionInstructionsSender(i) == address(this)) {
+                _extensionId = i;
+                emit ExtensionIdSet(i);
+                return;
+            }
+        }
+        revert ExtensionIdNotFound();
+    }
+
+    /// @notice This contract's extension id (0 until `setExtensionId()` has run).
+    function extensionId() external view returns (uint256) {
+        return _extensionId;
+    }
+
+    function _getExtensionId() internal view returns (uint256) {
+        if (_extensionId == 0) revert ExtensionIdNotSet();
+        return _extensionId;
+    }
+
     // --- views ---------------------------------------------------------------
 
-    /// @notice True once Flare has registered THIS contract as the extension's instructions sender.
+    /// @notice True once the registry has bound THIS contract as the extension's instructions sender.
     function isBound() external view returns (bool) {
-        return teeManager.getTeeExtensionInstructionsSender(extensionId) == address(this);
+        if (_extensionId == 0) return false;
+        return extensionRegistry.getTeeExtensionInstructionsSender(_extensionId) == address(this);
     }
 
     /// @notice Deterministic, owner-scoped walletId — lets a UI compute the id before creating it.
@@ -129,17 +179,16 @@ contract KeylessAccounts {
         return keccak256(abi.encode("KEYLESS_WALLET", owner, salt));
     }
 
-    /// @notice Fee a caller must attach for an op across the current machine set.
-    function quoteFee(bytes32 opCommand) external view returns (uint256) {
-        return teeManager.calculateFeeByTeeIds(
-            OP_TYPE, opCommand, teeManager.getActiveTeeMachines(extensionId)
-        );
+    /// @notice True if the wallet's rule is locked (frozen forever).
+    function isLocked(bytes32 walletId) external view returns (bool) {
+        return locked[walletId];
     }
 
     // --- account lifecycle ---------------------------------------------------
 
     /// @notice Create a programmable XRP account. The enclave generates its key; you learn the
-    ///         r-address from the INIT result / the enclave's /state. Attach quoteFee(OP_INIT).
+    ///         r-address from the INIT result / the enclave's /state. Attach the instruction fee as
+    ///         value; any excess is refunded to `claimBackAddress`.
     function createWallet(bytes32 salt) external payable nonReentrant returns (bytes32 walletId) {
         walletId = walletIdFor(msg.sender, salt);
         if (ownerOf[walletId] != address(0)) revert WalletExists();
@@ -149,11 +198,6 @@ contract KeylessAccounts {
         }
         bytes32 iid = _send(OP_INIT, abi.encode(walletId));
         emit WalletCreated(walletId, msg.sender, iid);
-    }
-
-    /// @notice True if the wallet's rule is locked (frozen forever).
-    function isLocked(bytes32 walletId) external view returns (bool) {
-        return locked[walletId];
     }
 
     /// @notice Point a wallet at a spending rule (the wallet's entire security surface).
@@ -201,7 +245,7 @@ contract KeylessAccounts {
     }
 
     /// @notice Spend from a wallet. Runs the wallet's rule first; the enclave signs only if it passes.
-    ///         Permissionless by design — the rule is the gate. Attach quoteFee(OP_PAY).
+    ///         Permissionless by design — the rule is the gate. Attach the instruction fee as value.
     function pay(bytes32 walletId, string calldata recipient, uint256 amount, bytes32 paymentReference)
         external
         payable
@@ -224,13 +268,10 @@ contract KeylessAccounts {
     function _send(bytes32 opCommand, bytes memory message) internal returns (bytes32) {
         // Exactly one machine: each machine that receives an instruction acts on it independently, so
         // fanning out would duplicate the payment.
-        address[] memory machines = teeManager.getRandomTeeIds(extensionId, 1);
+        address[] memory machines = machineRegistry.getRandomTeeIds(_getExtensionId(), 1);
         if (machines.length == 0) revert NoTeeMachines();
 
-        uint256 fee = teeManager.calculateFeeByTeeIds(OP_TYPE, opCommand, machines);
-        if (msg.value < fee) revert InsufficientFee(fee, msg.value);
-
-        IFlareTeeManager.TeeInstructionParams memory params = IFlareTeeManager.TeeInstructionParams({
+        ITeeExtensionRegistry.TeeInstructionParams memory params = ITeeExtensionRegistry.TeeInstructionParams({
             opType: OP_TYPE,
             opCommand: opCommand,
             message: message,
@@ -239,6 +280,8 @@ contract KeylessAccounts {
             claimBackAddress: claimBackAddress
         });
 
-        return teeManager.sendInstructions{value: msg.value}(machines, params);
+        // Forward the attached value as the instruction fee; the registry validates it and refunds any
+        // excess to claimBackAddress. (The scaffold dropped on-chain fee quoting.)
+        return extensionRegistry.sendInstructions{value: msg.value}(machines, params);
     }
 }

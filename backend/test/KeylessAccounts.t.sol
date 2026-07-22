@@ -8,15 +8,16 @@ import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
-import {IFlareTeeManager} from "../src/interfaces/IFlareTeeManager.sol";
+import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
+import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
 import {IWeb2Json} from "../src/interfaces/IFdc.sol";
-import {MockFlareTeeManager, MockFdcVerification} from "./Mocks.sol";
+import {MockTeeRegistry, MockFdcVerification} from "./Mocks.sol";
 
 contract KeylessAccountsTest is Test {
-    MockFlareTeeManager tee;
+    MockTeeRegistry tee;
     KeylessAccounts accounts;
 
-    uint256 constant EXT_ID = 454;
+    uint256 constant EXT_ID = 0x10000; // first public extension id
     uint256 constant FEE = 1000;
     address constant CLAIMBACK = address(0xC1a1);
     address reporter = makeAddr("enclaveReporter");
@@ -28,13 +29,16 @@ contract KeylessAccountsTest is Test {
     string constant ATTACKER = "rATTACKERwalletXXXXXXXXXXXXXXXXXXXX";
 
     function setUp() public {
-        tee = new MockFlareTeeManager();
+        tee = new MockTeeRegistry();
         address[] memory m = new address[](1);
         m[0] = makeAddr("teeMachine");
         tee.setMachines(m);
 
-        accounts = new KeylessAccounts(IFlareTeeManager(address(tee)), EXT_ID, CLAIMBACK, reporter);
-        tee.setInstructionsSender(address(accounts)); // simulate Flare binding
+        accounts = new KeylessAccounts(
+            ITeeExtensionRegistry(address(tee)), ITeeMachineRegistry(address(tee)), CLAIMBACK, reporter
+        );
+        tee.bindExtension(EXT_ID, address(accounts)); // simulate the registry assigning our extension id
+        accounts.setExtensionId(); // discover + cache it
 
         vm.deal(alice, 1 ether);
         vm.deal(bob, 1 ether);
@@ -63,6 +67,37 @@ contract KeylessAccountsTest is Test {
         vm.prank(alice);
         vm.expectRevert(KeylessAccounts.WalletExists.selector);
         accounts.createWallet{value: FEE}("main");
+    }
+
+    // --- extension id discovery ----------------------------------------------
+
+    function test_setExtensionId_discoversAndCaches() public view {
+        assertEq(accounts.extensionId(), EXT_ID);
+        assertTrue(accounts.isBound());
+    }
+
+    function test_setExtensionId_cannotSetTwice() public {
+        vm.expectRevert(KeylessAccounts.ExtensionIdAlreadySet.selector);
+        accounts.setExtensionId();
+    }
+
+    function test_setExtensionId_revertsWhenNotRegistered() public {
+        // a fresh manager not bound to any extension
+        KeylessAccounts fresh = new KeylessAccounts(
+            ITeeExtensionRegistry(address(tee)), ITeeMachineRegistry(address(tee)), CLAIMBACK, reporter
+        );
+        vm.expectRevert(KeylessAccounts.ExtensionIdNotFound.selector);
+        fresh.setExtensionId();
+    }
+
+    function test_send_revertsBeforeExtensionIdSet() public {
+        KeylessAccounts fresh = new KeylessAccounts(
+            ITeeExtensionRegistry(address(tee)), ITeeMachineRegistry(address(tee)), CLAIMBACK, reporter
+        );
+        tee.bindExtension(0x10001, address(fresh)); // registered, but setExtensionId not yet called
+        vm.prank(alice);
+        vm.expectRevert(KeylessAccounts.ExtensionIdNotSet.selector);
+        fresh.createWallet{value: FEE}("x");
     }
 
     function test_walletCount_increments() public {
