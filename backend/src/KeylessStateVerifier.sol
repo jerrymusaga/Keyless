@@ -7,30 +7,35 @@ pragma solidity ^0.8.23;
 ///         compute question — "what is verified on-chain?" — replacing the trusted `enclaveReporter`
 ///         relayer with a contract that only accepts a result the TEE actually attested to.
 ///
-/// @dev Registered as the extension's `_teeExtensionStateVerifier` (see IFlareTeeManager.register /
-///      setExtensionContracts). Today `KEYLESS_VERIFIER = address(0)` and a trusted relayer writes the
-///      r-address; this contract makes that trustless.
+/// @dev Registered as the extension's `_teeExtensionStateVerifier` via the diamond's
+///      `register(ITeeExtensionStateVerifier,address)` / `setExtensionContracts(extensionId,verifier,sender)`
+///      and read back with `getTeeExtensionStateVerifier(65645)`. Today `KEYLESS_VERIFIER = address(0)`
+///      and a trusted relayer writes the r-address; this contract makes that trustless.
+///
+///      NEW BASELINE (2026-07-23, verified live): diamond = 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE,
+///      ext 65645, machine 0xD47F3c4E…dD646 (production, code hash 0x194844cf…, governance 0xc99e27a5…).
 ///
 ///      WHAT IS KNOWN (filled in below):
-///        - The result we care about: the INIT ActionResult = the enclave-generated XRPL r-address for a
-///          walletId (the enclave returns abiEncodeString(address); see enclave processInit).
+///        - The result we care about: the INIT result = the enclave-generated XRPL r-address for a
+///          walletId (the enclave returns the address as a string; see enclave processInit / stateHandler).
 ///        - The write path: this contract is set as KeylessAccounts.enclaveReporter, so after verifying
 ///          it calls `reportXrplAddress(walletId, addr)` — reusing the existing, idempotent writeback.
-///        - Access control shape: only Flare's TEE manager / attestation-delivery path may call the
-///          entry point.
+///        - The wiring point is REAL on the new baseline: `ITeeExtensionStateVerifier` is the type the
+///          registry's `register`/`setExtensionContracts` accept, so a deployed verifier can be bound.
 ///
-///      WHAT IS UNKNOWN (the TODOs — fill from the updated FCC guides the moment they land):
-///        1. The EXACT entry-point signature the tee-proxy / manager calls on the verifier, and its args
-///           (the attestation blob, the machine identity, the instructionId, the result payload).
-///        2. HOW to verify the attestation on-chain (the machine's signature over the result vs the
-///           registered code hash / governance hash — likely a call back into the manager or a supplied
-///           proof).
-///        3. How the result correlates to a walletId (via the INIT instructionId → WalletCreated event,
-///           or the manager passes the walletId through).
+///      THE TWO CONCRETE BLOCKERS (do not guess past these — write nothing that fakes a check):
+///        1. INTERFACE: the exact callback `ITeeExtensionStateVerifier` exposes (what the diamond invokes,
+///           with which args + attestation proof) is NOT in the Go bindings, fce-sign `skills/references`,
+///           or the module cache. Need Flare's `ITeeExtensionStateVerifier.sol` (ask @fassko / flare
+///           contracts repo) before the entry point below can be made real.
+///        2. ATTESTED STATE SOURCE: our enclave currently emits walletId→r-address only via the custom
+///           HTTP `GET /state` (extension.go stateHandler) — NOT through tee-node's attested on-chain
+///           `systemState` channel (it was `0x` in /info). The enclave must publish the mapping through
+///           the attested state path so there is a signed on-chain state for this contract to verify.
 contract KeylessStateVerifier {
     /// @notice KeylessAccounts — this verifier is set as its `enclaveReporter`, so it may write addresses.
     IKeylessWriteback public immutable accounts;
-    /// @notice Flare's TEE manager diamond (Coston2: 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F). The
+    /// @notice Flare's TEE manager diamond (Coston2: 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE). The
     ///         only address allowed to deliver attested results here. TODO: confirm this is the caller.
     address public immutable teeManager;
 
