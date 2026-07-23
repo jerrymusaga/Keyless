@@ -111,7 +111,7 @@ export async function POST(request: Request) {
           errorName: name,
           reason:
             name === "NoTeeMachines"
-              ? "No TEE machine is currently serving extension 454."
+              ? "No TEE machine is currently serving extension 65645."
               : `Reverted with ${name ?? "an unrecognized error"}.`,
         });
       }

@@ -12,6 +12,7 @@ import { dryRunAuthorize } from "@/lib/showcase";
 import {
   ADDRESSES,
   ACCOUNTS_ABI,
+  INIT_FEE,
   RULES,
   RULE_META,
   ZERO_ADDRESS,
@@ -348,9 +349,8 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
     setBusy(true);
     try {
       await ensureFunded();
-      const fee = (await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "quoteFee", args: [toHex("XRPSEND", { size: 32 })] })) as bigint;
       const ref = toHex(crypto.getRandomValues(new Uint8Array(32)));
-      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, to.trim(), drops, ref], value: fee });
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, to.trim(), drops, ref], value: INIT_FEE });
       setMsg({ tone: "info", text: "Authorized. The enclave is signing and submitting to XRPL — your balance updates in a few seconds." });
       setTo(""); setAmount("");
     } catch (e) {

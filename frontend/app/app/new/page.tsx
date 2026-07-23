@@ -8,6 +8,7 @@ import { addAccount } from "@/lib/accounts";
 import {
   ADDRESSES,
   ACCOUNTS_ABI,
+  INIT_FEE,
   RULES,
   RULE_META,
   ZERO_ADDRESS,
@@ -50,15 +51,10 @@ export default function NewAccount() {
         args: [address, salt],
       })) as `0x${string}`;
 
-      // 2. createWallet — this sends the INIT that makes the enclave generate the XRPL key
+      // 2. createWallet — this sends the INIT that makes the enclave generate the XRPL key.
+      // The updated scaffold dropped on-chain fee quoting; attach a fixed INIT_FEE (excess refunds).
       setBusy("Creating your account (generating a key inside the enclave)…");
-      const fee = (await publicClient.readContract({
-        address: ADDRESSES.accounts,
-        abi: ACCOUNTS_ABI,
-        functionName: "quoteFee",
-        args: [toHex("INIT", { size: 32 })],
-      })) as bigint;
-      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "createWallet", args: [salt], value: fee });
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "createWallet", args: [salt], value: INIT_FEE });
       addAccount(address, { walletId, label: label.trim() || "Untitled account", salt, createdAt: Date.now() });
 
       // 3. point it at the chosen rule

@@ -93,7 +93,7 @@ export function Roadmap() {
           Stated plainly: the three above are roadmap, not shipped. What is shipped — the account,
           the keyring, the rule engine, a real payment that refused to be redirected — is{" "}
           <a
-            href={`${EXPLORER}/address/0x0020014c038610E8062A6F4BFF62ea1f08dC01A7`}
+            href={`${EXPLORER}/address/0x57eb332D7000752ee82a35cc1A75941F0a619979`}
             target="_blank"
             rel="noreferrer"
             className="text-mist-300 underline decoration-ink-600 underline-offset-4 hover:decoration-signal-500"

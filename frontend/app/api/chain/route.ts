@@ -23,8 +23,8 @@ export async function GET() {
       client.readContract({
         address: ADDRESSES.teeManager,
         abi: TEE_MANAGER_ABI,
-        functionName: "getActiveTeeMachines",
-        args: [BigInt(EXTENSION_ID)],
+        functionName: "getRandomTeeIds",
+        args: [BigInt(EXTENSION_ID), 1n],
       }),
       client.readContract({
         address: ADDRESSES.accounts,

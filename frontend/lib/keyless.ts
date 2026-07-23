@@ -27,33 +27,35 @@ export const EXPLORER = coston2.blockExplorers.default.url;
 export const XRPL_EXPLORER = "https://testnet.xrpl.org";
 
 export const ADDRESSES = {
-  /** Flare's TEE manager diamond. Not ours — Flare's system contract. */
-  teeManager: "0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F",
+  /** Flare's TEE manager diamond. Not ours — Flare's system contract. (Redeployed 2026-07-23.) */
+  teeManager: "0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE",
   /** KeylessAccounts — the multi-tenant manager, and the extension's sole instructionsSender.
-   *  Every wallet's key obeys this contract and nothing else. (Writeback + lockable rules, bound on 454.) */
-  accounts: "0x870456e4e13461850D8e7E4b749BE8881A99a266",
-  /** Legacy single-wallet demo policy. Still deployed; the live "refuse" demo runs its allowlist
-   *  check against it (a real on-chain revert) until the interactive demo is moved to `accounts`. */
+   *  Every wallet's key obeys this contract and nothing else. (Writeback + lockable rules, bound on 65645.) */
+  accounts: "0x57eb332D7000752ee82a35cc1A75941F0a619979",
+  /** Legacy single-wallet demo policy (old baseline, dead). Kept only for the historical /see fallback. */
   policy: "0x3CC32eB5d7ef1751f1fd0b81DdEBcca382bf586d",
   /** Deployer. Holds no XRPL key — that is the point. */
   owner: "0xc760AB37E00082202e1659C256E01372f1739886",
-  /** The FDC-attested TEE machine serving extension 454. */
-  teeMachine: "0x27a7A5D0968F8948F65536B34125A7b2748Ad316",
+  /** The governance-attested TEE machine serving extension 65645. */
+  teeMachine: "0xD47F3c4E26173df11667c5Ad3723e66Fa45dD646",
 } as const;
 
-/** The rule modules. Each is one readable contract; a wallet points at one. `escrow` is built + tested
- *  but ships with the next full redeploy, so its address is the zero address until then — the UI treats
- *  a zero-address rule as "available soon" and won't let a wallet point at it. */
+/** The rule modules. Each is one readable contract; a wallet points at one. */
 export const RULES = {
-  allowlist: "0x02094bbE30C33361315959a77003F9856163F40C",
-  rateLimit: "0x60c9Fec17e077bC711A138b85dBd552109E552c9",
-  subscription: "0xa190C9Ac3aED7E7BaFaCa9292dd9a7130e77f9F1",
-  escrow: "0x824e88CE4fF25f4B0d0F4517c571A965Efb5800e",
+  allowlist: "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2",
+  rateLimit: "0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d",
+  subscription: "0xA828482FaB7C149Aa6d339B31016cF0D7165AeDC",
+  escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-export const EXTENSION_ID = 454;
+export const EXTENSION_ID = 65645;
+
+/** Instruction fee (wei) attached to createWallet / pay. The updated fce-sign scaffold dropped
+ *  on-chain fee quoting (no more `quoteFee`); the registry validates msg.value and refunds excess
+ *  to claimBackAddress. Override with NEXT_PUBLIC_INIT_FEE if the chain's fee differs. */
+export const INIT_FEE: bigint = BigInt(process.env.NEXT_PUBLIC_INIT_FEE ?? "1000");
 
 /**
  * The enclave's XRPL account, generated *inside* the TEE — no human ever saw the
@@ -214,13 +216,6 @@ export const ACCOUNTS_ABI = [
   },
   {
     type: "function",
-    name: "quoteFee",
-    stateMutability: "view",
-    inputs: [{ name: "opCommand", type: "bytes32" }],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
     name: "createWallet",
     stateMutability: "payable",
     inputs: [{ name: "salt", type: "bytes32" }],
@@ -335,9 +330,12 @@ export const TEE_MANAGER_ABI = [
   },
   {
     type: "function",
-    name: "getActiveTeeMachines",
+    name: "getRandomTeeIds",
     stateMutability: "view",
-    inputs: [{ name: "extensionId", type: "uint256" }],
+    inputs: [
+      { name: "extensionId", type: "uint256" },
+      { name: "count", type: "uint256" },
+    ],
     outputs: [{ type: "address[]" }],
   },
 ] as const;
