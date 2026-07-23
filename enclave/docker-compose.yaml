@@ -47,6 +47,15 @@ services:
     environment:
       - MODE=${MODE:-1}
       - INITIAL_OWNER=${INITIAL_OWNER:-0xF4E021377420Afe90c1A7D2b8968904946633a64}
+      # tee-node v0.0.21 binds every signature to CHAIN_ID; must match the proxy
+      # chain_id and the actual chain. Defaults to Coston2 (114); coston sets 16.
+      - CHAIN_ID=${CHAIN_ID:-114}
+      # TEE governance: the node signs its machine data with a governanceHash
+      # derived from (signers, threshold). Must agree with what set-governance
+      # registers on-chain. Defaults to the deployer (INITIAL_OWNER) as sole
+      # signer, threshold 1 — fine for development.
+      - GOVERNANCE_SIGNERS=${GOVERNANCE_SIGNERS:-${INITIAL_OWNER:-0xF4E021377420Afe90c1A7D2b8968904946633a64}}
+      - GOVERNANCE_THRESHOLD=${GOVERNANCE_THRESHOLD:-1}
       - PROXY_URL=http://ext-proxy:6663
       - CONFIG_PORT=5501
       - SIGN_PORT=7701

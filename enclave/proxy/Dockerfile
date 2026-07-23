@@ -1,27 +1,23 @@
-# Self-contained build of tee-proxy. Clones both tee-proxy and tee-node
-# (its dependency) from GitHub so no local sibling repos are needed.
+# Self-contained build of tee-proxy. Clones tee-proxy from GitHub at build time
+# so no local sibling repos are needed.
 #
-# Defaults are pinned to match the extension's Go-module pins (go/go.sum and
-# go/tools/go.sum): tee-node v0.0.20 + tee-proxy v0.0.17. They MUST stay aligned
-# with the extension-tee image's tee-node version — the proxy and the node share
-# the TeeInfoResponse type, and its `attestation` encoding changed between
-# versions (hexutil.Bytes <-> string). A skew here makes the proxy panic on
-# startup with "cannot unmarshal hex string without 0x prefix ... TeeInfoResponse
-# .attestation". Override via build args when bumping both sides together.
+# TEE_PROXY_VERSION MUST stay aligned with the extension's Go-module pins
+# (go/tools/go.mod): tee-proxy v0.0.18. tee-proxy's own go.mod transitively pins
+# the matching tee-node and go-flare-common line, so building it with
+# `go mod download` pulls the exact governance-aware node code the extension-tee
+# image uses — no separate tee-node clone or replace directive is needed.
+# Override via build arg when bumping both sides together.
 
-ARG TEE_PROXY_VERSION=v0.0.17
-ARG TEE_NODE_VERSION=v0.0.20
+ARG TEE_PROXY_VERSION=v0.0.18
 
 FROM golang:1.25.1-alpine AS builder
 
 RUN apk add --no-cache git
 
 ARG TEE_PROXY_VERSION
-ARG TEE_NODE_VERSION
 
 WORKDIR /app
 RUN git clone --depth 1 --branch ${TEE_PROXY_VERSION} https://github.com/flare-foundation/tee-proxy.git
-RUN git clone --depth 1 --branch ${TEE_NODE_VERSION} https://github.com/flare-foundation/tee-node.git
 
 WORKDIR /app/tee-proxy
 RUN go mod download
