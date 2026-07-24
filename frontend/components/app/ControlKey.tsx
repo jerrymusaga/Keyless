@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useKeyless } from "./KeylessProvider";
-import { Button, Card, Notice } from "./ui";
+import { Button, Card, Copy, Notice } from "./ui";
 import { addr, explorerAddress } from "@/lib/keyless";
 
 /**
@@ -48,14 +48,17 @@ export function ControlKey() {
           </p>
         </div>
         {address && (
-          <a
-            href={explorerAddress(address)}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-[12px] text-mist-400 hover:text-mist-200"
-          >
-            {addr(address)}
-          </a>
+          <div className="flex items-center gap-2">
+            <a
+              href={explorerAddress(address)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[12px] text-mist-400 hover:text-mist-200"
+            >
+              {addr(address)}
+            </a>
+            <Copy text={address} />
+          </div>
         )}
       </div>
 

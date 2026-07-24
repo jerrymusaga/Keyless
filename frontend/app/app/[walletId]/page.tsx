@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useState } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig } from "@/components/app/RuleConfig";
-import { Button, Card, Field, Input, Notice, Spinner } from "@/components/app/ui";
+import { Button, Card, Copy, Field, Input, Notice, Spinner } from "@/components/app/ui";
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
 import { getXrplBalance, getRecentPayments, type XrplTx } from "@/lib/xrpl";
@@ -104,6 +104,8 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
         </div>
       </div>
 
+      <WelcomeBanner walletId={wid} />
+
       <ReceivePanel xrpl={xrpl} />
 
       {hasRule && rk ? (
@@ -126,11 +128,55 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           </Card>
           <TestPanel walletId={wid} rule={rule} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
-          {!locked && <LockPanel walletId={wid} rule={rule} onLocked={readChain} />}
+          {!locked && <LockPanel walletId={wid} onLocked={readChain} />}
         </>
       ) : (
         <Notice tone="warn">This account has no rule yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
       )}
+    </div>
+  );
+}
+
+function WelcomeBanner({ walletId }: { walletId: string }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(`kl_welcome_${walletId}`)) setShow(true);
+    } catch {
+      /* no storage — skip */
+    }
+  }, [walletId]);
+  if (!show) return null;
+  const dismiss = () => {
+    try {
+      localStorage.setItem(`kl_welcome_${walletId}`, "1");
+    } catch {
+      /* ignore */
+    }
+    setShow(false);
+  };
+  return (
+    <div className="rounded-xl border border-signal-500/30 bg-signal-500/[0.06] p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2.5 text-[13px] leading-relaxed">
+          <p className="text-mist-100">
+            <span className="mr-1.5">🔐</span>
+            <span className="font-medium">Your Keyless account is live.</span> Its key was born inside a Flare
+            TEE — no one holds it. Not the app, not us, not even you.
+          </p>
+          <p className="text-mist-300">
+            <span className="mr-1.5">🛡️</span>Your policy is set. This account now does{" "}
+            <span className="text-mist-100">only what you allowed</span> — nothing else can happen.
+          </p>
+          <p className="text-mist-300">
+            <span className="mr-1.5">💰</span>Fund the deposit address below to activate it — then try a payment
+            your policy blocks and watch it get stopped. <span className="text-mist-100">That&rsquo;s the whole point.</span>
+          </p>
+        </div>
+        <button type="button" onClick={dismiss} aria-label="Dismiss" className="shrink-0 text-sm text-mist-500 transition-colors hover:text-mist-300">
+          ✕
+        </button>
+      </div>
     </div>
   );
 }
@@ -172,11 +218,14 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
         </div>
       </div>
 
-      <div className="mt-4 rounded-lg border hairline bg-ink-950 px-4 py-3">
+      <div className="mt-4 flex items-center gap-3 rounded-lg border hairline bg-ink-950 px-4 py-3">
         {xrpl ? (
-          <a href={xrplAccount(xrpl)} target="_blank" rel="noreferrer" className="break-all font-mono text-sm text-signal-300 hover:text-signal-200">
-            {xrpl}
-          </a>
+          <>
+            <a href={xrplAccount(xrpl)} target="_blank" rel="noreferrer" className="min-w-0 break-all font-mono text-sm text-signal-300 hover:text-signal-200">
+              {xrpl}
+            </a>
+            <Copy text={xrpl} label="Copy address" className="ml-auto" />
+          </>
         ) : (
           <span className="font-mono text-sm text-amber-200/80">provisioning your XRPL address… (a few seconds)</span>
         )}
@@ -201,30 +250,11 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
   );
 }
 
-function LockPanel({ walletId, rule, onLocked }: { walletId: `0x${string}`; rule: `0x${string}`; onLocked: () => void }) {
+function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: () => void }) {
   const { write } = useKeyless();
-  const [to, setTo] = useState("");
-  const [amount, setAmount] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [tested, setTested] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
   const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  // Safety rail: you can't lock until a payment you expect to work actually passes the real rule.
-  // A locked rule that authorizes nothing would strand the funds forever — so we make you prove a
-  // working path first (a read-only dry-run against the live rule; nothing is spent).
-  const test = async () => {
-    if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
-    const n = Number(amount);
-    if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
-    setTesting(true);
-    setTested(null);
-    setArming(false);
-    const v = await dryRunAuthorize(rule, walletId, to.trim(), BigInt(Math.round(n * 1e6)));
-    setTested({ ok: v.allowed, reason: v.reason, label: `${n} XRP → ${addr(to.trim())}` });
-    setTesting(false);
-  };
 
   const lock = async () => {
     setBusy(true);
@@ -240,48 +270,23 @@ function LockPanel({ walletId, rule, onLocked }: { walletId: `0x${string}`; rule
 
   return (
     <Card className="border-allow-500/20">
-      <h2 className="text-[15px] font-medium text-mist-100">Lock this rule</h2>
+      <h2 className="text-[15px] font-medium text-mist-100">Lock this policy</h2>
       <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
-        Freeze the rule <span className="text-mist-200">permanently</span>. After this, the rule and its
-        settings can never change — not even with your control key, and not even if it&rsquo;s stolen.
-        Best for savings / exchange-only accounts you won&rsquo;t edit again.{" "}
+        Freeze the policy <span className="text-mist-200">permanently</span>. After this, its rule and
+        settings can never change — not with your control key, not even if it&rsquo;s stolen. Best once
+        you&rsquo;ve tested it above and won&rsquo;t edit it again.{" "}
         <span className="text-mist-300">There is no unlock.</span>
       </p>
 
-      <div className="mt-4 rounded-lg border hairline bg-ink-950/50 p-4">
-        <p className="text-[12px] text-mist-400">
-          First, prove a payment you expect to work still passes — otherwise you could freeze the account
-          with no way to spend. This is a dry-run against the real rule; nothing is sent.
-        </p>
-        <div className="mt-2.5 flex gap-2">
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="A recipient that should be allowed" className="text-[12px]" />
-          <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-20 text-[12px]" />
-          <Button variant="ghost" onClick={test} disabled={testing}>{testing ? "…" : "Test"}</Button>
-        </div>
-        {tested && (
-          <div className="mt-3">
-            <Notice tone={tested.ok ? "ok" : "error"}>
-              {tested.ok
-                ? `✓ ${tested.label} passes. It's safe to lock — this path keeps working forever.`
-                : `✗ ${tested.label} is refused (“${tested.reason ?? "not permitted"}”). Fix the rule before locking, or the account could be stranded.`}
-            </Notice>
-          </div>
-        )}
-      </div>
-
       <div className="mt-4">
-        {tested?.ok ? (
-          !arming ? (
-            <Button variant="ghost" onClick={() => setArming(true)}>Lock rule permanently</Button>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Sure?</span>
-              <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
-              <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>Cancel</Button>
-            </div>
-          )
+        {!arming ? (
+          <Button variant="ghost" onClick={() => setArming(true)}>Lock policy →</Button>
         ) : (
-          <p className="text-[12px] text-mist-500">Run a passing test above to enable locking.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Lock it forever?</span>
+            <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
+            <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>No, keep editable</Button>
+          </div>
         )}
       </div>
       {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}
@@ -354,11 +359,14 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
       setMsg({ tone: "info", text: "Authorized. The enclave is signing and submitting to XRPL — your balance updates in a few seconds." });
       setTo(""); setAmount("");
     } catch (e) {
-      // The rule reverted, or the fee was short. Decode the rule's Rejected(reason) if present.
-      let reason = "the rule refused this payment";
+      // A contract revert here is the POLICY DOING ITS JOB — celebrate it, don't show a scary error.
+      // Anything else (short fee, network) is a real error.
+      let reason = "your policy didn't allow this";
+      let blocked = false;
       if (e instanceof BaseError) {
         const rev = e.walk((err) => err instanceof ContractFunctionRevertedError);
         if (rev instanceof ContractFunctionRevertedError) {
+          blocked = true;
           reason = (rev.data?.args?.[0] as string) ?? rev.reason ?? rev.shortMessage ?? reason;
         } else {
           reason = e.shortMessage ?? reason;
@@ -366,7 +374,14 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
       } else if (e instanceof Error) {
         reason = e.message.split("\n")[0];
       }
-      setMsg({ tone: "error", text: `Refused: ${reason}` });
+      if (blocked) {
+        setMsg({
+          tone: "ok",
+          text: `🛡️ Blocked on-chain — your policy stopped this payment (“${reason}”). That's the whole point: even with the key, this account can't send there. Nothing left the account.`,
+        });
+      } else {
+        setMsg({ tone: "error", text: `Couldn't send: ${reason}` });
+      }
     } finally {
       setBusy(false);
     }
@@ -377,6 +392,9 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
       <h2 className="text-[15px] font-medium text-mist-100">Spend</h2>
       <p className="mt-1 text-[13px] text-mist-400">
         This runs your rule first. If the rule refuses, the enclave never signs — nothing leaves the account.
+      </p>
+      <p className="mt-1.5 text-[12px] text-signal-300/80">
+        Don&rsquo;t trust it? Try sending to an address you didn&rsquo;t allow — watch it get blocked. 🛡️
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />

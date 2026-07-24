@@ -20,10 +20,105 @@ const WINDOWS: Record<string, bigint> = { "per day": 86_400n, "per week": 604_80
 
 /** Rule-specific configuration. Every call here is onlyWalletOwner on-chain — signed by the control key. */
 export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
+  if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "allowlist") return <AllowlistConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
   if (ruleKey === "subscription") return <SubscriptionConfig walletId={walletId} />;
   return <EscrowConfig walletId={walletId} />;
+}
+
+function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
+  const { write } = useKeyless();
+  const [rows, setRows] = useState<{ address: string; tag: string }[]>([{ address: "", tag: "" }]);
+  const [maxTx, setMaxTx] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  const addRow = () => setRows((r) => [...r, { address: "", tag: "" }]);
+  const removeRow = (i: number) => setRows((r) => r.filter((_, j) => j !== i));
+  const setRow = (i: number, field: "address" | "tag", v: string) =>
+    setRows((r) => r.map((row, j) => (j === i ? { ...row, [field]: v } : row)));
+
+  const save = async () => {
+    setMsg(null);
+    const valid = rows.filter((r) => r.address.trim());
+    if (valid.length === 0) return setMsg({ tone: "error", text: "Add at least one recipient address." });
+    for (const r of valid) {
+      if (!XRPL_ADDRESS_RE.test(r.address.trim())) return setMsg({ tone: "error", text: `Not a valid XRPL r-address: ${r.address.trim()}` });
+      if (r.tag.trim()) {
+        const t = Number(r.tag.trim());
+        if (!Number.isInteger(t) || t < 0 || t > 4_294_967_295) return setMsg({ tone: "error", text: "A destination tag must be a whole number 0–4294967295." });
+      }
+    }
+    let capDrops = 0n;
+    if (maxTx.trim()) {
+      try {
+        capDrops = xrpToDrops(maxTx);
+      } catch (e) {
+        return setMsg({ tone: "error", text: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    // Signed by the embedded control key — no wallet popups, so a few sequential txs is fine.
+    setBusy(true);
+    try {
+      for (const r of valid) {
+        const a = r.address.trim();
+        if (r.tag.trim()) {
+          await write({ address: RULES.exchange as `0x${string}`, abi: RULE_ABIS.exchange as never, functionName: "allowWithTag", args: [walletId, a, Number(r.tag.trim())] });
+        } else {
+          await write({ address: RULES.exchange as `0x${string}`, abi: RULE_ABIS.exchange as never, functionName: "allow", args: [walletId, a] });
+        }
+      }
+      if (capDrops > 0n) {
+        await write({ address: RULES.exchange as `0x${string}`, abi: RULE_ABIS.exchange as never, functionName: "setMaxPerTx", args: [walletId, capDrops] });
+      }
+      const capNote = capDrops > 0n ? `, up to ${maxTx} XRP each` : "";
+      setMsg({ tone: "ok", text: `Saved. This account can now pay ${valid.length} approved recipient${valid.length > 1 ? "s" : ""}${capNote} — and nowhere else.` });
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Field
+        label="Approved recipients"
+        hint="This account can only ever pay these addresses. Add a destination tag for a centralized-exchange deposit; leave it blank for a normal address (a friend, your own wallet)."
+      >
+        <div className="space-y-2">
+          {rows.map((r, i) => (
+            <div key={i} className="flex gap-2">
+              <Input value={r.address} onChange={(e) => setRow(i, "address", e.target.value)} placeholder="rExchangeDeposit…" />
+              <input
+                value={r.tag}
+                onChange={(e) => setRow(i, "tag", e.target.value)}
+                placeholder="tag (optional)"
+                inputMode="numeric"
+                className="w-36 shrink-0 rounded-lg border hairline bg-ink-950 px-3 font-mono text-sm text-mist-100 outline-none transition-colors placeholder:text-mist-500 focus:border-signal-500/60"
+              />
+              {rows.length > 1 && (
+                <button type="button" onClick={() => removeRow(i)} aria-label="Remove" className="shrink-0 px-2 text-mist-500 transition-colors hover:text-red-300">
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <button type="button" onClick={addRow} className="text-xs font-medium text-signal-400 transition-colors hover:text-signal-300">
+            + Add another address
+          </button>
+        </div>
+      </Field>
+
+      <Field label="Max per transaction (optional)" hint="Cap the size of any single payment. Leave blank for no limit.">
+        <Input value={maxTx} onChange={(e) => setMaxTx(e.target.value)} placeholder="no limit" inputMode="decimal" />
+      </Field>
+
+      <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save policy"}</Button>
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+    </div>
+  );
 }
 
 function useConfigAction() {

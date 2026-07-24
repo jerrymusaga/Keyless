@@ -1,7 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+
+/** A small copy-to-clipboard button. Shows a brief "Copied" confirmation. */
+export function Copy({ text, label = "Copy", className = "" }: { text: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${label}`}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1300);
+        } catch {
+          /* clipboard blocked — no-op */
+        }
+      }}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-md border hairline bg-ink-900 px-2 py-1 text-[11px] font-medium text-mist-400 transition-colors hover:text-mist-100 ${className}`}
+    >
+      {copied ? "✓ Copied" : label}
+    </button>
+  );
+}
 
 export function Button({
   children,
