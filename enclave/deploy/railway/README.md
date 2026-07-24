@@ -112,15 +112,34 @@ drive this.)
 
 ---
 
-## 5. Point the frontend at it (Vercel)
+## 5. Deploy the address relayer
 
-Set on the Vercel project:
-```
-ENCLAVE_URL          = <railway proxy url>     # the /api/provision relayer reads /state here
-ENCLAVE_REPORTER_KEY = <deployer key, 0x…>     # writes reportXrplAddress on-chain
-```
-Now create/pay works from the public site. The read-only `/see` showcase keeps working
-regardless (pure chain reads, no enclave dependency).
+The enclave exposes each wallet's XRPL address at `GET /state` on port **7702**, but that
+port is **never public** (it shares a mux with `/action`, which in simulated mode must not
+be reachable from outside). So a tiny always-on **relayer** reads `/state` over Railway's
+**private** network and records addresses on-chain via `reportXrplAddress`. The browser
+then just reads `xrplAddressOf` from chain.
+
+1. **+ New → GitHub Repo →** same repo. Name it **`relayer`**.
+2. **Settings → Root Directory:** `enclave/deploy/railway/relayer`. No public domain needed.
+3. Variables (use the dropdown for `RAILWAY_PRIVATE_DOMAIN` → **`extension-tee`**):
+   ```
+   CHAIN_URL         = https://coston2-api.flare.network/ext/C/rpc
+   ENCLAVE_STATE_URL = http://${{extension-tee.RAILWAY_PRIVATE_DOMAIN}}:7702
+   KEYLESS_ACCOUNTS  = 0x57eb332D7000752ee82a35cc1A75941F0a619979
+   REPORTER_KEY      = <deployer key, 0x-prefixed — the enclaveReporter>
+   ```
+4. Deploy. Logs should show `[relayer] polling …/state …`, and once a wallet's INIT lands,
+   `[relayer] reported 0x… -> r…`.
+
+---
+
+## 6. Point the frontend at it (Vercel)
+
+The relayer handles address reporting, so the frontend needs **no enclave connection** —
+**leave `ENCLAVE_URL` unset** (the `/api/provision` route stays disabled; the dashboard
+reads `xrplAddressOf` from chain, which the relayer populates). Nothing to add here for
+provisioning. The read-only `/see` showcase works regardless (pure chain reads).
 
 ---
 

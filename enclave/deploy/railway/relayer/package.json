@@ -1,0 +1,12 @@
+{
+  "name": "keyless-address-relayer",
+  "private": true,
+  "type": "module",
+  "description": "Reads enclave /state over Railway's private network and writes wallet XRPL addresses on-chain via reportXrplAddress.",
+  "scripts": {
+    "start": "node relayer.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  }
+}
