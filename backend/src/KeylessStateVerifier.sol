@@ -26,7 +26,7 @@ pragma solidity ^0.8.23;
 ///      THE TWO CONCRETE BLOCKERS (do not guess past these — write nothing that fakes a check):
 ///        1. INTERFACE: the exact callback `ITeeExtensionStateVerifier` exposes (what the diamond invokes,
 ///           with which args + attestation proof) is NOT in the Go bindings, fce-sign `skills/references`,
-///           or the module cache. Need Flare's `ITeeExtensionStateVerifier.sol` (ask @fassko / flare
+///           or the module cache. Need Flare's `ITeeExtensionStateVerifier.sol` (ask the Flare team / flare
 ///           contracts repo) before the entry point below can be made real.
 ///        2. ATTESTED STATE SOURCE: our enclave currently emits walletId→r-address only via the custom
 ///           HTTP `GET /state` (extension.go stateHandler) — NOT through tee-node's attested on-chain

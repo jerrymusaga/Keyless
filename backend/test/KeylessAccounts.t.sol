@@ -4,6 +4,7 @@ pragma solidity ^0.8.23;
 import {Test} from "forge-std/Test.sol";
 import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
+import {ExchangeRule} from "../src/rules/ExchangeRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
@@ -454,5 +455,71 @@ contract KeylessAccountsTest is Test {
         rule.cancel(id);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no active escrow"));
         rule.release(id, _proof(delivered));
+    }
+
+    // --- exchange rule: allowlist + optional destination tag + optional per-tx cap ------------
+
+    /// @dev The destination tag rides in the top 4 bytes of paymentReference (as the enclave reads it).
+    function _tagRef(uint32 tag) internal pure returns (bytes32) {
+        return bytes32(uint256(tag) << 224);
+    }
+
+    function test_exchange_paysAllowed_noTag() public {
+        bytes32 id = _wallet(alice, "ex");
+        ExchangeRule rule = new ExchangeRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allow(id, EXCHANGE); // plain address, no tag required
+        vm.stopPrank();
+
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("memo"));
+        assertEq(tee.lastRecipient(), EXCHANGE);
+        assertEq(tee.lastAmount(), 5_000_000);
+    }
+
+    function test_exchange_requiresExactTag() public {
+        bytes32 id = _wallet(alice, "ex");
+        ExchangeRule rule = new ExchangeRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allowWithTag(id, EXCHANGE, 777); // CEX deposit slot: tag 777 required
+        vm.stopPrank();
+
+        // right tag -> allowed
+        accounts.pay{value: FEE}(id, EXCHANGE, 3_000_000, _tagRef(777));
+        assertEq(tee.lastAmount(), 3_000_000);
+
+        // wrong tag -> blocked (a stolen key can't redirect to a different deposit slot)
+        uint256 before = tee.instructionCount();
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "wrong destination tag"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 3_000_000, _tagRef(888));
+        assertEq(tee.instructionCount(), before, "no instruction on wrong tag");
+    }
+
+    function test_exchange_maxPerTx() public {
+        bytes32 id = _wallet(alice, "ex");
+        ExchangeRule rule = new ExchangeRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allow(id, EXCHANGE);
+        rule.setMaxPerTx(id, 5_000_000); // <= 5 XRP per payment
+        vm.stopPrank();
+
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("ok"));
+
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "over per-tx limit"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_001, bytes32("too much"));
+    }
+
+    function test_exchange_rejectsUnlisted() public {
+        bytes32 id = _wallet(alice, "ex");
+        ExchangeRule rule = new ExchangeRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allow(id, EXCHANGE);
+        vm.stopPrank();
+
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("steal"));
     }
 }

@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -218,8 +219,10 @@ func (e *Extension) processPay(action teetypes.Action, df *instruction.DataFixed
 		e.mu.Unlock()
 	}
 
-	// The payment reference goes in an XRPL memo. FAssets requires it to match the redemption's
-	// paymentReference exactly, which is how the agent's payment is later matched to the request.
+	// The payment reference is 32 bytes: the top 4 are an XRPL destination tag (big-endian uint32),
+	// the rest is a free-form memo. We set the on-chain-visible DestinationTag from those 4 bytes so a
+	// policy that pins (recipient, tag) — e.g. the ExchangeRule for CEX deposits — binds the exact tag
+	// this enclave signs. A zero tag means "no tag" (omitted). The full reference still goes in a memo.
 	payment := xrpltx.Payment{
 		BaseTx: xrpltx.BaseTx{
 			Account: xrpltypes.Address(w.GetAddress()),
@@ -233,6 +236,9 @@ func (e *Extension) processPay(action teetypes.Action, df *instruction.DataFixed
 		},
 		Destination: xrpltypes.Address(p.Recipient),
 		Amount:      xrpltypes.XRPCurrencyAmount(p.Amount),
+	}
+	if tag := binary.BigEndian.Uint32(p.PaymentReference[:4]); tag != 0 {
+		payment.DestinationTag = &tag
 	}
 
 	flatTx := payment.Flatten()
