@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useKeyless } from "@/components/app/KeylessProvider";
-import { Button, Card, Field, Input, Notice, Spinner } from "@/components/app/ui";
+import { Button, Card, Copy, Field, Input, Notice, Spinner } from "@/components/app/ui";
 import { addAccount } from "@/lib/accounts";
 import {
   ADDRESSES,
@@ -26,6 +26,7 @@ export default function NewAccount() {
   const [rule, setRule] = useState<RuleKey>("exchange");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gasHelp, setGasHelp] = useState<string | null>(null); // Flare faucet URL when auto-funding is off
 
   if (status !== "ready" || !address) {
     return (
@@ -37,10 +38,18 @@ export default function NewAccount() {
 
   const create = async () => {
     setError(null);
+    setGasHelp(null);
     try {
-      // 0. make sure the control key can pay gas + the INIT fee
+      // 0. make sure the control key can pay gas + the INIT fee. If the gas sponsor is off (no
+      // FAUCET_KEY) or dry, don't barrel into createWallet and fail on gas — point the user at the
+      // public Flare faucet to top up their own control key, then retry.
       setBusy("Funding your control key…");
-      await ensureFunded();
+      const funded = await ensureFunded();
+      if (!funded.ok) {
+        setBusy(null);
+        setGasHelp(funded.faucet ?? "https://faucet.flare.network/coston2");
+        return;
+      }
 
       // 1. deterministic salt + walletId
       const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
@@ -119,6 +128,23 @@ export default function NewAccount() {
             })}
           </div>
         </div>
+
+        {gasHelp && (
+          <Notice tone="warn">
+            <p>
+              Your control key needs a little <span className="font-medium">C2FLR</span> for gas before it can
+              create an account. Get some free from the{" "}
+              <a href={gasHelp} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-amber-100">
+                Flare Coston2 faucet ↗
+              </a>{" "}
+              and send it to your control-key address, then hit “Create account” again.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <code className="min-w-0 break-all font-mono text-[12px] text-mist-200">{address}</code>
+              <Copy text={address} label="Copy" />
+            </div>
+          </Notice>
+        )}
 
         {error && <Notice tone="error">{error}</Notice>}
 

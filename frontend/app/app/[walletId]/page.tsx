@@ -231,6 +231,30 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
         )}
       </div>
 
+      {xrpl && !bal?.funded && (
+        <p className="mt-2 text-[12px] leading-relaxed text-mist-500">
+          Need testnet XRP? Fund this address in one step at the{" "}
+          <a
+            href="https://test.bithomp.com/faucet"
+            target="_blank"
+            rel="noreferrer"
+            className="text-signal-300 underline underline-offset-2 hover:text-signal-200"
+          >
+            Bithomp faucet ↗
+          </a>
+          {" "}(paste the address above), or pick another from the{" "}
+          <a
+            href="https://xrpl.org/resources/dev-tools/xrp-faucets"
+            target="_blank"
+            rel="noreferrer"
+            className="text-signal-300 underline underline-offset-2 hover:text-signal-200"
+          >
+            XRP faucet list ↗
+          </a>
+          .
+        </p>
+      )}
+
       {txs && txs.length > 0 && (
         <div className="mt-5">
           <div className="text-xs text-mist-500">Recent payments</div>
