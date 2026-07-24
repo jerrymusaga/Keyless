@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "watchPatterns": [
+      "enclave/deploy/railway/proxy/**"
+    ]
+  }
+}
