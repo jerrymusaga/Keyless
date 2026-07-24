@@ -237,6 +237,7 @@ func (e *Extension) processPay(action teetypes.Action, df *instruction.DataFixed
 		Destination: xrpltypes.Address(p.Recipient),
 		Amount:      xrpltypes.XRPCurrencyAmount(p.Amount),
 	}
+	// build: destination-tag-v1 (rebuild marker — do not remove)
 	if tag := binary.BigEndian.Uint32(p.PaymentReference[:4]); tag != 0 {
 		payment.DestinationTag = &tag
 	}
