@@ -17,13 +17,13 @@ import {
 import { publicClient } from "@/lib/clients";
 import { toHex } from "viem";
 
-const ORDER: RuleKey[] = ["allowlist", "rateLimit", "subscription", "escrow"];
+const ORDER: RuleKey[] = ["exchange", "rateLimit", "subscription", "allowlist", "escrow"];
 
 export default function NewAccount() {
   const router = useRouter();
   const { status, address, write, ensureFunded } = useKeyless();
   const [label, setLabel] = useState("");
-  const [rule, setRule] = useState<RuleKey>("allowlist");
+  const [rule, setRule] = useState<RuleKey>("exchange");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 

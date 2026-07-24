@@ -42,6 +42,7 @@ export const ADDRESSES = {
 
 /** The rule modules. Each is one readable contract; a wallet points at one. */
 export const RULES = {
+  exchange: "0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4",
   allowlist: "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2",
   rateLimit: "0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d",
   subscription: "0xA828482FaB7C149Aa6d339B31016cF0D7165AeDC",
@@ -271,6 +272,13 @@ export const ACCOUNTS_ABI = [
 /** The four rule modules, with the config calls each exposes. A wallet points at one; its owner then
  *  configures it through these. All are `onlyWalletOwner(walletId)` on-chain. */
 export const RULE_ABIS = {
+  exchange: [
+    { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "allowWithTag", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "tag", type: "uint32" }], outputs: [] },
+    { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "setMaxPerTx", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxDrops", type: "uint256" }], outputs: [] },
+    { type: "function", name: "maxPerTx", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "uint256" }] },
+  ],
   allowlist: [
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "allowMany", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipients", type: "string[]" }], outputs: [] },
@@ -294,8 +302,14 @@ export const RULE_ABIS = {
 /** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
 export type RuleKey = keyof typeof RULES;
 export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string }> = {
-  allowlist: {
+  exchange: {
     name: "Exchange-only",
+    tagline: "Pay only the addresses you approve — each with an optional deposit tag and spend cap.",
+    protects: "A stolen key can't send anywhere new, or to your exchange under a different tag.",
+    address: RULES.exchange,
+  },
+  allowlist: {
+    name: "Allowlist",
     tagline: "Pay only addresses you've allowlisted. Everything else is refused.",
     protects: "A stolen key, a poisoned address, a compromised app — none can send anywhere new.",
     address: RULES.allowlist,
