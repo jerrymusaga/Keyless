@@ -67,7 +67,7 @@ export default function NewAccount() {
       addAccount(address, { walletId, label: label.trim() || "Untitled account", salt, createdAt: Date.now() });
 
       // 3. point it at the chosen rule
-      setBusy("Attaching your rule…");
+      setBusy("Applying your policy…");
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "setRule", args: [walletId, RULES[rule]] });
 
       // 4. kick off XRPL-address provisioning (best-effort; dashboard polls for it)
@@ -89,7 +89,7 @@ export default function NewAccount() {
       <a href="/app" className="text-xs text-mist-500 hover:text-mist-300">← Your accounts</a>
       <h1 className="mt-3 text-2xl font-medium tracking-[-0.02em] text-mist-100">New account</h1>
       <p className="mt-1 text-sm text-mist-400">
-        Name it, choose the one rule its key will obey, and Keyless generates the XRP account inside the enclave.
+        Name it, pick the policy its key will obey, and Keyless generates the XRP account inside the enclave.
       </p>
 
       <div className="mt-8 space-y-6">
@@ -100,8 +100,8 @@ export default function NewAccount() {
         </Card>
 
         <div>
-          <h2 className="text-sm font-medium text-mist-200">Pick a rule</h2>
-          <p className="mt-1 text-xs text-mist-500">This is the account&rsquo;s entire security surface. You can edit its details next.</p>
+          <h2 className="text-sm font-medium text-mist-200">Pick a policy template</h2>
+          <p className="mt-1 text-xs text-mist-500">This is your account&rsquo;s entire security surface — the rules its key must obey. You&rsquo;ll set its details next.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {ORDER.map((k) => {
               const meta = RULE_META[k];

@@ -117,7 +117,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
             <div className="mt-5 border-t hairline pt-5">
               {locked ? (
                 <Notice tone="ok">
-                  This rule is <span className="font-medium">locked forever</span>. Its pointer and settings
+                  This policy is <span className="font-medium">locked forever</span>. Its rule and settings
                   can never change — not even with your control key. That&rsquo;s why this account can&rsquo;t
                   be drained even if the key is stolen: it can only ever keep doing exactly what it does now.
                 </Notice>
@@ -131,7 +131,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           {!locked && <LockPanel walletId={wid} onLocked={readChain} />}
         </>
       ) : (
-        <Notice tone="warn">This account has no rule yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
+        <Notice tone="warn">This account has no policy yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
       )}
     </div>
   );

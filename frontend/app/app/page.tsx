@@ -75,7 +75,7 @@ export default function AppHome() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-medium tracking-[-0.02em] text-mist-100">Your accounts</h1>
-          <p className="mt-1 text-sm text-mist-400">Each account is an XRP wallet that only does what its rule allows.</p>
+          <p className="mt-1 text-sm text-mist-400">Each account is an XRP wallet that only does what its policy allows.</p>
         </div>
         <Button href="/app/new">+ New account</Button>
       </div>
@@ -127,7 +127,7 @@ function AccountRow({ row }: { row: Row }) {
             <span className="truncate text-[15px] font-medium text-mist-100">{row.label}</span>
             {hasRule ? (
               <span className="rounded-full border border-signal-500/30 bg-signal-500/10 px-2 py-0.5 text-[11px] text-signal-300">
-                {name ?? "custom rule"}
+                {name ?? "custom policy"}
               </span>
             ) : (
               <span className="rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[11px] text-amber-200/90">
@@ -172,7 +172,7 @@ function StatsBar() {
   return (
     <div className="mt-6 flex items-center divide-x divide-ink-800 rounded-xl border hairline bg-ink-900/50">
       {stat(s?.totalAccounts, "Accounts created")}
-      {stat(s?.activeAccounts, "Active (with a rule)")}
+      {stat(s?.activeAccounts, "Active (with a policy)")}
       <div className="hidden px-5 text-[11px] text-mist-500 sm:block">live on Coston2</div>
     </div>
   );
