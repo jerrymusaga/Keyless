@@ -192,3 +192,15 @@ Judges read Solidity and a registered code hash instead of trusting an operator.
 - **`KeylessStateVerifier` is in progress.** The enclave emits signed, code-hash-bound state; the contract that verifies it on-chain and writes `xrplAddressOf` is the closing hop (see [`FCC_TRACK2.md`](FCC_TRACK2.md)).
 - **Keyless is not "a smart account for XRP."** That's access/UX (and Flare Smart Accounts already do it). Keyless is about **safety**: a TEE-held key that even your own key can't drain.
 - **Quantum:** Keyless enforces *policy*, not key secrecy against a quantum adversary — an attacker who could derive the key from the public key would sign on XRPL directly, bypassing Flare. Keyless is a policy-enforcement primitive, not post-quantum cryptography.
+
+---
+
+## Path to mainnet
+
+**Today's testnet deployment runs one simulated enclave (`MODE=1`) with keys in RAM — a demo shortcut, not the production design.** Its honest limitation: if that single machine restarts, it regenerates its identity and loses its in-memory keys, so wallets created before the restart stop working (on testnet, recover routing with [`enclave/scripts/reregister-railway.sh`](enclave/scripts/reregister-railway.sh)). On mainnet that would be unacceptable for a wallet — and it is exactly what the production architecture removes:
+
+1. **Threshold key backup (`walletkeymanager`).** The signing key is secret-shared — `sk = S_provider + S_admin` — across ⅔ of Flare's data providers **plus the wallet owner's own key admins**, and re-sharded periodically. If a TEE machine dies, the key is **restored onto another attested TEE** from those shares. **Machine death ≠ fund loss**, and no single party ever holds the key.
+2. **Hardware attestation (`MODE=0`).** Real Confidential Space ties machine identity to attested hardware, so identity is stable across restarts — no orphaned registrations.
+3. **A fleet of machines.** Production runs many attested TEEs per extension; one restarting doesn't take the service down.
+
+So mainnet Keyless is as trustworthy as Flare's own security root: a key that **cannot be lost by any single party and cannot be extracted by any single party** — only reconstructed by a decentralized threshold, and only inside policy-enforcing code. That backup design is a first-class Flare mechanism (see [`FCC_TRACK2.md`](FCC_TRACK2.md)); wiring Keyless onto it is the primary post-hackathon milestone.
