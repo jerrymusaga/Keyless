@@ -20,7 +20,7 @@ mkdir -p /app/config
 cat > /app/config/config.toml <<EOF
 redis_port = "${REDIS_HOST}:${REDIS_PORT}"
 private_key_variable = "PROXY_PRIVATE_KEY"
-initial_signing_policy_offset = 0
+initial_signing_policy_offset = 2
 signing_policy_fetch_interval = "20s"
 
 chain_id = 114
