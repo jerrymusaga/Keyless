@@ -15,8 +15,8 @@ WORKDIR /build
 # Redirect apt at snapshot.debian.org keyed on SOURCE_DATE_EPOCH so every build installs the exact package set that existed at that instant.
 # NOTE: adapted from https://github.com/reproducible-containers/repro-sources-list.sh/blob/master/alternative/Dockerfile.debian-13
 RUN \
-  --mount=type=cache,target=/var/cache/apt,sharing=locked \
-  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  --mount=type=cache,id=keyless-apt-cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,id=keyless-apt-lib,target=/var/lib/apt,sharing=locked \
   : "${SOURCE_DATE_EPOCH:=$(stat --format=%Y /etc/apt/sources.list.d/debian.sources)}" && \
   snapshot="$(/bin/bash -euc "printf \"%(%Y%m%dT%H%M%SZ)T\n\" \"${SOURCE_DATE_EPOCH}\"")" && \
   : "Enabling snapshot" && \
