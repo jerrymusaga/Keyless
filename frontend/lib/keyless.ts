@@ -301,7 +301,8 @@ export const RULE_ABIS = {
 
 /** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
 export type RuleKey = keyof typeof RULES;
-export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string }> = {
+/** `comingSoon` templates are shown in the picker but not selectable yet (they need the FDC/executor step). */
+export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string; comingSoon?: boolean }> = {
   exchange: {
     name: "Exchange & allowlist",
     tagline: "Pay only addresses you approve — with optional exchange destination tags and a per-payment cap.",
@@ -319,12 +320,14 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; protect
     tagline: "Pay a supplier only once Flare's Data Connector proves the condition.",
     protects: "Funds stay locked until the world proves delivery — no early release, no wrong payee.",
     address: RULES.escrow,
+    comingSoon: true,
   },
   fxrpMint: {
     name: "FXRP mint",
     tagline: "Convert XRP to FXRP on Flare — the account can only ever mint to your Flare address, nowhere else.",
     protects: "A stolen key can't move your XRP out — it can only turn it into FXRP in your own Flare wallet.",
     address: RULES.fxrpMint,
+    comingSoon: true,
   },
 };
 

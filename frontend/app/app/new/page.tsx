@@ -105,7 +105,7 @@ export default function NewAccount() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {ORDER.map((k) => {
               const meta = RULE_META[k];
-              const disabled = (RULES[k] as string) === ZERO_ADDRESS;
+              const disabled = (RULES[k] as string) === ZERO_ADDRESS || !!meta.comingSoon;
               const active = rule === k;
               return (
                 <button
@@ -119,7 +119,7 @@ export default function NewAccount() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[15px] font-medium text-mist-100">{meta.name}</span>
-                    {disabled && <span className="text-[10px] uppercase tracking-wide text-amber-200/80">soon</span>}
+                    {disabled && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200/90">Soon</span>}
                     {active && !disabled && <span className="text-signal-400">✓</span>}
                   </div>
                   <p className="mt-1.5 text-[13px] leading-relaxed text-mist-400">{meta.tagline}</p>

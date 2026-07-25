@@ -44,6 +44,9 @@ export function Features() {
               <div className="flex items-center gap-3">
                 <RuleIcon k={k} />
                 <h3 className="text-base font-medium text-mist-100">{RULE_META[k].name}</h3>
+                {RULE_META[k].comingSoon && (
+                  <span className="ml-auto rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200/90">Soon</span>
+                )}
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-mist-400">{RULE_META[k].tagline}</p>
               <p className="mt-3 border-t hairline pt-3 text-[13px] text-signal-300/80">
