@@ -96,6 +96,37 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
+/**
+ * A numeric text field that only accepts digits (and, when `decimal`, a single dot). We sanitize on
+ * change rather than use `type="number"` — that type still allows "e"/"+"/"-", shows spinner arrows, and
+ * returns "" for anything it considers invalid, which hides typos. Here, non-numeric keystrokes are just
+ * dropped, so the value the caller holds is always a clean numeric string.
+ */
+export function NumberInput({
+  value,
+  onValueChange,
+  decimal = false,
+  ...props
+}: { value: string; onValueChange: (v: string) => void; decimal?: boolean } & Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "value" | "onChange" | "type"
+>) {
+  const sanitize = (raw: string) => {
+    if (!decimal) return raw.replace(/[^0-9]/g, "");
+    const cleaned = raw.replace(/[^0-9.]/g, "");
+    const [whole, ...rest] = cleaned.split(".");
+    return rest.length ? `${whole}.${rest.join("")}` : cleaned; // collapse any extra dots
+  };
+  return (
+    <Input
+      {...props}
+      value={value}
+      inputMode={decimal ? "decimal" : "numeric"}
+      onChange={(e) => onValueChange(sanitize(e.target.value))}
+    />
+  );
+}
+
 export function Notice({
   tone = "info",
   children,

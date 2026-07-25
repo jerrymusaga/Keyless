@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { keccak256, toBytes } from "viem";
 import { useKeyless } from "./KeylessProvider";
-import { Button, Field, Input, Notice } from "./ui";
+import { Button, Field, Input, NumberInput, Notice } from "./ui";
 import { RULES, RULE_ABIS, XRPL_ADDRESS_RE, type RuleKey } from "@/lib/keyless";
 
 const XRP = 1_000_000n;
@@ -93,7 +93,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
               <Input value={r.address} onChange={(e) => setRow(i, "address", e.target.value)} placeholder="rExchangeDeposit…" />
               <input
                 value={r.tag}
-                onChange={(e) => setRow(i, "tag", e.target.value)}
+                onChange={(e) => setRow(i, "tag", e.target.value.replace(/[^0-9]/g, ""))}
                 placeholder="tag (optional)"
                 inputMode="numeric"
                 className="w-36 shrink-0 rounded-lg border hairline bg-ink-950 px-3 font-mono text-sm text-mist-100 outline-none transition-colors placeholder:text-mist-500 focus:border-signal-500/60"
@@ -112,7 +112,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
       </Field>
 
       <Field label="Max per transaction (optional)" hint="Cap the size of any single payment. Leave blank for no limit.">
-        <Input value={maxTx} onChange={(e) => setMaxTx(e.target.value)} placeholder="no limit" inputMode="decimal" />
+        <NumberInput value={maxTx} onValueChange={setMaxTx} decimal placeholder="no limit" />
       </Field>
 
       <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save policy"}</Button>
@@ -212,7 +212,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       </Field>
       <Field label="Spending allowance" hint="The most it can spend per window. It can never exceed this, however it's hijacked.">
         <div className="flex gap-2">
-          <Input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="10" inputMode="decimal" />
+          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" />
           <select
             value={window}
             onChange={(e) => setWindow(e.target.value)}
@@ -250,7 +250,7 @@ function SubscriptionConfig({ walletId }: { walletId: `0x${string}` }) {
       <Field label="Merchant address"><Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="rMerchant…" /></Field>
       <Field label="Cap per period" hint="The merchant can pull up to this — never more, never elsewhere.">
         <div className="flex gap-2">
-          <Input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="9.99" inputMode="decimal" />
+          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="9.99" />
           <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border hairline bg-ink-950 px-3 text-sm text-mist-100 outline-none focus:border-signal-500/60">
             {Object.keys(WINDOWS).map((w) => <option key={w}>{w}</option>)}
           </select>
@@ -289,7 +289,7 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
         Connector proof of the condition (proof submission is an advanced step, done outside this form).
       </Notice>
       <Field label="Payee"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
-      <Field label="Cap"><Input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="100" inputMode="decimal" /></Field>
+      <Field label="Cap"><NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" /></Field>
       <Field label="Release condition" hint="Hashed on-chain. Unlocks when Flare's Data Connector attests it.">
         <Input value={condition} onChange={(e) => setCondition(e.target.value)} placeholder="delivery == true" />
       </Field>
