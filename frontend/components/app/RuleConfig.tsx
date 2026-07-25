@@ -263,7 +263,7 @@ const CAL_LABEL = ["day", "week", "month"]; // calendar unit index -> label
 function formatLimit(l: Limit): string {
   const cap = formatDrops(BigInt(l.cap));
   if (l.mode === 1) return `${cap} per calendar ${CAL_LABEL[Number(l.param)] ?? "period"}`;
-  if (l.mode === 2) return `${cap} total until ${new Date(Number(l.param) * 1000).toLocaleDateString()}`;
+  if (l.mode === 2) return `${cap} total until ${new Date(Number(l.param) * 1000).toLocaleDateString(undefined, { timeZone: "UTC" })} (UTC)`;
   return `${cap} ${periodLabel(l.param)}`; // rolling
 }
 
@@ -398,7 +398,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       const ts = Math.floor(new Date(until).getTime() / 1000);
       if (!ts || ts <= Math.floor(Date.now() / 1000)) return alert("Pick a date in the future.");
       param = BigInt(ts);
-      summary = `${cap} XRP total until ${new Date(until).toLocaleDateString()}`;
+      summary = `${cap} XRP total until ${new Date(until).toLocaleDateString(undefined, { timeZone: "UTC" })} (UTC)`;
     }
 
     const perTxNote = perTxDrops > 0n ? `, max ${perTx} XRP/payment` : "";
@@ -449,7 +449,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       </Field>
 
-      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget that hard-stops.">
+      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget that hard-stops. Resets and dates use UTC (on-chain time), not your local timezone.">
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {([["rolling", "Rolling window"], ["calendar", "Calendar period"], ["until", "Until a date"]] as const).map(([val, label]) => (
@@ -496,7 +496,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
                 onChange={(e) => setUntil(e.target.value)}
                 className={`${selectCls} [color-scheme:dark]`}
               />
-              <span>then it hard-stops.</span>
+              <span>then it hard-stops at 00:00 UTC.</span>
             </div>
           )}
         </div>
