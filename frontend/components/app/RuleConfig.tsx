@@ -254,7 +254,7 @@ function periodLabel(secondsStr: string) {
 type RuleConfigResponse = {
   recipients?: SavedRecipient[];
   capDrops?: string;
-  limit?: { maxPerPeriod: string; period: string };
+  limit?: { maxPerPeriod: string; period: string; maxPerTx: string; allowlistOnly: boolean };
 };
 
 /**
@@ -322,7 +322,11 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
           </div>
         ))}
         {data?.limit && (
-          <p className="text-[12px] text-mist-500">Allowance: <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerPeriod))} {periodLabel(data.limit.period)}</span></p>
+          <p className="text-[12px] text-mist-500">
+            Allowance: <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerPeriod))} {periodLabel(data.limit.period)}</span>
+            {data.limit.maxPerTx !== "0" && <> · max <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerTx))}</span>/payment</>}
+            {" · "}<span className="text-mist-300">{data.limit.allowlistOnly ? "approved recipients only" : "any recipient"}</span>
+          </p>
         )}
         {err && <p className="text-[12px] text-refuse-500">{err}</p>}
       </div>
@@ -335,6 +339,8 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [cap, setCap] = useState("");
   const [count, setCount] = useState("1");
   const [unit, setUnit] = useState("days");
+  const [perTx, setPerTx] = useState("");
+  const [allowlistOnly, setAllowlistOnly] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
 
@@ -349,28 +355,56 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   };
   const setLimit = async () => {
     let drops: bigint;
+    let perTxDrops: bigint;
     try {
       drops = xrpToDrops(cap);
+      perTxDrops = perTx.trim() ? xrpToDrops(perTx) : 0n; // 0 = no per-payment cap
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
     const n = parseInt(count, 10);
     if (!Number.isInteger(n) || n < 1) return alert("Enter a whole number of units (e.g. every 2 weeks).");
-    const unitSec = UNITS.find((u) => u.label === unit)?.seconds ?? 86_400;
-    const period = BigInt(n) * BigInt(unitSec);
-    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure", [walletId, drops, period], `Allowance set: ${cap} XRP ${periodLabel(period.toString())}.`);
+    const period = BigInt(n) * BigInt(UNITS.find((u) => u.label === unit)?.seconds ?? 86_400);
+    const perTxNote = perTxDrops > 0n ? `, max ${perTx} XRP/payment` : "";
+    const whoNote = allowlistOnly ? "to approved recipients" : "to anyone";
+    const ok = await run(
+      RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure",
+      [walletId, drops, period, perTxDrops, allowlistOnly],
+      `Limit set: ${cap} XRP ${periodLabel(period.toString())}${perTxNote}, ${whoNote}.`,
+    );
     if (ok) setRefreshKey((k) => k + 1);
   };
   return (
     <div className="space-y-4">
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
-      <Field label="Allowlist the recipients" hint="Even within the allowance, it can only pay these.">
+
+      <Field label="Who can it pay?" hint="Approved-only bounds it to a list you name; Anyone lets it pay any address — still capped by the allowance below.">
         <div className="flex gap-2">
-          <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
-          <Button variant="ghost" onClick={allow} disabled={busy}>Allow</Button>
+          {([[true, "Approved recipients only"], [false, "Anyone"]] as const).map(([val, label]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setAllowlistOnly(val)}
+              className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
+                allowlistOnly === val ? "border-signal-500/60 bg-signal-500/5 text-mist-100" : "hairline bg-ink-900/60 text-mist-400 hover:text-mist-200"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </Field>
-      <Field label="Spending allowance" hint="The most that can leave in each window — it can never exceed this, however the key is used. Set any window: every 6 hours, 2 weeks, 3 months…">
+
+      {allowlistOnly && (
+        <Field label="Approved recipients" hint="It can only pay these — even within the allowance.">
+          <div className="flex gap-2">
+            <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
+            <Button variant="ghost" onClick={allow} disabled={busy}>Allow</Button>
+          </div>
+        </Field>
+      )}
+
+      <Field label="Spending allowance" hint="The most that can leave in each window — never exceeded, however the key is used. Any window: every 6 hours, 2 weeks, 3 months…">
         <div className="flex flex-wrap items-center gap-2">
           <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" className="w-24" />
           <span className="text-[13px] text-mist-500">XRP per</span>
@@ -382,9 +416,14 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
           >
             {UNITS.map((u) => <option key={u.label} value={u.label}>{Number(count) === 1 ? u.label.slice(0, -1) : u.label}</option>)}
           </select>
-          <Button onClick={setLimit} disabled={busy}>{busy ? "…" : "Set"}</Button>
         </div>
       </Field>
+
+      <Field label="Max per payment (optional)" hint="Also cap each single payment, on top of the window budget. Leave blank for no per-payment cap.">
+        <NumberInput value={perTx} onValueChange={setPerTx} decimal placeholder="no per-payment cap" className="w-48" />
+      </Field>
+
+      <Button onClick={setLimit} disabled={busy}>{busy ? "Saving…" : "Set limit"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );

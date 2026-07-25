@@ -42,7 +42,7 @@ contract SetupDemo is Script {
         bytes32 wRate = accounts.createWallet{value: initFee}(bytes32("demo-ratelimit"));
         accounts.setRule(wRate, address(rateLimit));
         rateLimit.allow(wRate, EXCHANGE);
-        rateLimit.configure(wRate, 10_000_000, 1 days);
+        rateLimit.configure(wRate, 10_000_000, 1 days, 0, true);
 
         // 3. Subscription: merchant may pull <= 9.99 XRP / 30 days
         bytes32 wSub = accounts.createWallet{value: initFee}(bytes32("demo-subscription"));

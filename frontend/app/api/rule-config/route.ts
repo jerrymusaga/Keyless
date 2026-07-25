@@ -31,6 +31,7 @@ const E = {
   ] } as AbiEvent,
   limitConfigured: { type: "event", name: "LimitConfigured", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" },
+    { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" },
   ] } as AbiEvent,
   escrowConfigured: { type: "event", name: "EscrowConfigured", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
@@ -81,12 +82,12 @@ export async function POST(req: Request) {
       const events = await replay(rule, [allowEv, E.removed, ...extra], walletId);
       const map = new Map<string, { requireTag: boolean; tag: number }>();
       let capDrops: string | undefined;
-      let limit: { maxPerPeriod: string; period: string } | undefined;
+      let limit: { maxPerPeriod: string; period: string; maxPerTx: string; allowlistOnly: boolean } | undefined;
       for (const e of events) {
         if (e.ev.name === "RecipientAllowed") map.set(String(e.args.recipient), { requireTag: !!e.args.requireTag, tag: Number(e.args.tag ?? 0) });
         else if (e.ev.name === "RecipientRemoved") map.delete(String(e.args.recipient));
         else if (e.ev.name === "MaxPerTxSet") capDrops = String(e.args.maxDrops);
-        else if (e.ev.name === "LimitConfigured") limit = { maxPerPeriod: String(e.args.maxPerPeriod), period: String(e.args.period) };
+        else if (e.ev.name === "LimitConfigured") limit = { maxPerPeriod: String(e.args.maxPerPeriod), period: String(e.args.period), maxPerTx: String(e.args.maxPerTx ?? 0), allowlistOnly: !!e.args.allowlistOnly };
       }
       const recipients = [...map.entries()].map(([address, v]) => ({ address, requireTag: v.requireTag, tag: v.tag }));
       return Response.json({ recipients, capDrops, limit });

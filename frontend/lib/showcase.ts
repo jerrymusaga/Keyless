@@ -7,6 +7,9 @@ import { ADDRESSES, RULES } from "./keyless";
 // The contract stays deployed, so the read-only dry-run still faithfully demonstrates the allowlist
 // behaviour. Hardcoded here rather than via RULES since it's no longer in the template map.
 const DEPRECATED_ALLOWLIST_RULE = "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2" as const;
+// The Spending-limit demo account was provisioned on RateLimitRule v1; the app now uses v2 (adds optional
+// allowlist + per-payment cap). The v1 contract stays deployed, so the read-only demo still works.
+const RATELIMIT_V1_RULE = "0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d" as const;
 
 /**
  * The engine behind the no-login showcase (/see). Each "try" is a READ-ONLY dry-run of the real
@@ -101,7 +104,7 @@ export const DEMOS: Demo[] = [
     key: "rateLimit",
     name: "Spending limit",
     walletId: "0xdc2006bef11900f063e4b8d1f6d2d54d5214798aae5a8f6e2e5eec8ab6a1019a",
-    rule: RULES.rateLimit,
+    rule: RATELIMIT_V1_RULE,
     config: "Allowlisted recipient + a cap of 10 XRP per day.",
     scene: "An allowance for a bot: it can spend to the allowlist, up to 10 XRP/day. Try to blow past it.",
     presets: [

@@ -247,7 +247,7 @@ contract KeylessAccountsTest is Test {
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
         rule.allow(id, EXCHANGE);
-        rule.configure(id, 10_000_000, 1 days); // max 10 XRP/day
+        rule.configure(id, 10_000_000, 1 days, 0, true); // max 10 XRP/day, allowlist-only, no per-tx cap
         vm.stopPrank();
 
         // agent spends up to the cap across calls
@@ -271,13 +271,50 @@ contract KeylessAccountsTest is Test {
         RateLimitRule rule = new RateLimitRule(address(accounts));
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, 10_000_000, 1 days);
+        rule.configure(id, 10_000_000, 1 days, 0, true);
         vm.stopPrank();
 
         // a hijacked agent tries the attacker; not allowlisted -> blocked regardless of the cap
         vm.prank(agent);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
         accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("x"));
+    }
+
+    function test_rateLimit_openMode_allowsAnyRecipientWithinCap() public {
+        bytes32 id = _wallet(alice, "allowance");
+        RateLimitRule rule = new RateLimitRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, 10_000_000, 1 days, 0, false); // open mode: no allowlist
+        vm.stopPrank();
+
+        // pays a never-allowlisted address just fine, as long as it's under the cap
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, ATTACKER, 8_000_000, bytes32("a"));
+        assertEq(tee.lastAmount(), 8_000_000);
+
+        // still bounded by the window cap
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "rate limit exceeded"));
+        accounts.pay{value: FEE}(id, ATTACKER, 3_000_000, bytes32("b"));
+    }
+
+    function test_rateLimit_perTxCap_boundsSinglePayment() public {
+        bytes32 id = _wallet(alice, "capped");
+        RateLimitRule rule = new RateLimitRule(address(accounts));
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.allow(id, EXCHANGE);
+        rule.configure(id, 100_000_000, 1 days, 5_000_000, true); // 100 XRP/day but max 5 XRP/tx
+        vm.stopPrank();
+
+        vm.startPrank(agent);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "over per-tx limit"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 6_000_000, bytes32("a"));
+        // at or under the per-tx cap is fine
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("b"));
+        assertEq(tee.lastAmount(), 5_000_000);
+        vm.stopPrank();
     }
 
     // --- subscription rule ---------------------------------------------------
