@@ -129,7 +129,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           </Card>
           <TestPanel walletId={wid} rule={rule} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
-          {!locked && <LockPanel walletId={wid} onLocked={readChain} />}
+          {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
       ) : (
         <Notice tone="warn">This account has no policy yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
@@ -275,11 +275,40 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
   );
 }
 
-function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: () => void }) {
+function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; ruleKey: RuleKey; onLocked: () => void }) {
   const { write } = useKeyless();
   const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Whether the policy actually has a configuration. Locking an EMPTY policy is a trap: it freezes the
+  // account forever with nothing allowed and no way to fix it. Gate the button until it's configured.
+  const [configured, setConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/rule-config", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rule: ruleKey, walletId }),
+          cache: "no-store",
+        });
+        const b = await res.json().catch(() => ({}));
+        const ok = Array.isArray(b.recipients)
+          ? b.recipients.length > 0
+          : ruleKey === "subscription"
+            ? !!b.plan
+            : ruleKey === "escrow"
+              ? !!b.escrow
+              : false;
+        if (!stop) setConfigured(ok);
+      } catch {
+        if (!stop) setConfigured(null); // couldn't verify — stay locked-out (fail closed on an irreversible action)
+      }
+    })();
+    return () => { stop = true; };
+  }, [ruleKey, walletId]);
 
   const lock = async () => {
     setBusy(true);
@@ -304,8 +333,15 @@ function LockPanel({ walletId, onLocked }: { walletId: `0x${string}`; onLocked: 
       </p>
 
       <div className="mt-4">
-        {!arming ? (
-          <Button variant="ghost" onClick={() => setArming(true)}>Lock policy →</Button>
+        {configured === false ? (
+          <Notice tone="warn">
+            Configure this policy first — add at least one approved recipient above. Locking it empty would
+            freeze the account forever with nothing allowed.
+          </Notice>
+        ) : !arming ? (
+          <Button variant="ghost" onClick={() => setArming(true)} disabled={configured !== true}>
+            {configured === null ? "Checking policy…" : "Lock policy →"}
+          </Button>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Lock it forever?</span>
