@@ -5,7 +5,10 @@ import { keccak256, toBytes } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
-import { RULES, RULE_ABIS, XRPL_ADDRESS_RE, addr, formatDrops, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, INIT_FEE, RULES, RULE_ABIS, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type RuleKey } from "@/lib/keyless";
+
+/** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
+const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
 
 const XRP = 1_000_000n;
 function xrpToDrops(s: string): bigint {
@@ -31,6 +34,7 @@ const UNITS: { label: string; seconds: number }[] = [
 export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
+  if (ruleKey === "fxrpMint") return <FxrpMintConfig walletId={walletId} />;
   return <EscrowConfig walletId={walletId} />;
 }
 
@@ -507,6 +511,137 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       </Field>
 
       <Button onClick={setLimit} disabled={busy}>{busy ? "Saving…" : "Set limit"}</Button>
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+    </div>
+  );
+}
+
+function FxrpMintConfig({ walletId }: { walletId: `0x${string}` }) {
+  const { address, write } = useKeyless();
+  const [useControlKey, setUseControlKey] = useState(true);
+  const [custom, setCustom] = useState("");
+  const [current, setCurrent] = useState<string | null>(null);
+  const [coreVault, setCoreVault] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [mintAmt, setMintAmt] = useState("");
+  const [minting, setMinting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [r, cv] = await Promise.all([
+        publicClient.readContract({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "recipientOf", args: [walletId] }) as Promise<string>,
+        publicClient.readContract({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "coreVaultAddress" }) as Promise<string>,
+      ]);
+      setCurrent(r && r !== ZERO_ADDRESS ? r : null);
+      setCoreVault(cv);
+    } catch { /* transient */ }
+  }, [walletId]);
+  useEffect(() => { load(); }, [load]);
+
+  const recipient = (useControlKey ? address ?? "" : custom.trim());
+  const save = async () => {
+    setMsg(null);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) return setMsg({ tone: "error", text: "Enter a valid Flare (0x…) address." });
+    setBusy(true);
+    try {
+      await write({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "configure", args: [walletId, recipient as `0x${string}`] });
+      setCurrent(recipient);
+      setMsg({ tone: "ok", text: `Set. This account can only mint FXRP to ${addr(recipient)} — nowhere else.` });
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Mint = pay the Core Vault the pinned mint memo for the CONFIGURED recipient (the rule rejects anything else).
+  const mint = async () => {
+    setMsg(null);
+    if (!current) return;
+    let drops: bigint;
+    try {
+      drops = xrpToDrops(mintAmt);
+    } catch (e) {
+      return setMsg({ tone: "error", text: e instanceof Error ? e.message : String(e) });
+    }
+    setMinting(true);
+    try {
+      const memo = fxrpMintMemo(current as `0x${string}`);
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
+      setMintAmt("");
+      setMsg({ tone: "ok", text: `Sent ${mintAmt} XRP to the Core Vault to mint FXRP to ${addr(current)}. An executor completes the mint shortly.` });
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    } finally {
+      setMinting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Notice tone="info">
+        Minting FXRP means sending XRP to Flare&rsquo;s FAssets Core Vault, and receiving FXRP on Flare. This account
+        can <span className="text-mist-100">only</span> do that — crediting the Flare address below, never anywhere else.
+        After the XRP lands, an executor completes the mint.
+      </Notice>
+
+      {current && (
+        <Field label="Currently mints to">
+          <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{current}</code>
+            <Copy text={current} />
+          </div>
+        </Field>
+      )}
+
+      <Field label="Mint FXRP to" hint="A Flare (EVM) address. Your Keyless control key is one — minting there keeps the FXRP in the wallet you already manage, ready for Flare DeFi.">
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            {([[true, "My control key"], [false, "Another Flare address"]] as const).map(([val, label]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setUseControlKey(val)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
+                  useControlKey === val ? "border-signal-500/60 bg-signal-500/5 text-mist-100" : "hairline bg-ink-900/60 text-mist-400 hover:text-mist-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {useControlKey ? (
+            <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+              <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{address ?? "…"}</code>
+              {address && <Copy text={address} />}
+            </div>
+          ) : (
+            <Input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="0x… Flare address" />
+          )}
+        </div>
+      </Field>
+
+      <Field label="Deposit address (FAssets Core Vault)" hint="The only XRPL address this account can pay.">
+        <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+          <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-300">{coreVault || "…"}</code>
+          {coreVault && <Copy text={coreVault} />}
+        </div>
+      </Field>
+
+      <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Set mint recipient"}</Button>
+
+      {current && (
+        <div className="border-t hairline pt-4">
+          <Field label="Mint FXRP" hint="Sends XRP from this account's balance to the Core Vault. You receive FXRP at the address above once an executor relays the proof — it can go nowhere else.">
+            <div className="flex flex-wrap items-center gap-2">
+              <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
+              <span className="text-[13px] text-mist-500">XRP</span>
+              <Button onClick={mint} disabled={minting}>{minting ? "Minting…" : "Mint FXRP"}</Button>
+            </div>
+          </Field>
+        </div>
+      )}
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );

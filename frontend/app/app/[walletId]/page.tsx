@@ -14,6 +14,7 @@ import {
   ACCOUNTS_ABI,
   INIT_FEE,
   RULES,
+  RULE_ABIS,
   RULE_META,
   ZERO_ADDRESS,
   XRPL_ADDRESS_RE,
@@ -288,6 +289,17 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
     let stop = false;
     (async () => {
       try {
+        // FXRP mint stores a single recipient (public getter) — read it directly, no event replay needed.
+        if (ruleKey === "fxrpMint") {
+          const r = (await publicClient.readContract({
+            address: RULES.fxrpMint as `0x${string}`,
+            abi: RULE_ABIS.fxrpMint as never,
+            functionName: "recipientOf",
+            args: [walletId],
+          })) as string;
+          if (!stop) setConfigured(r !== ZERO_ADDRESS);
+          return;
+        }
         const res = await fetch("/api/rule-config", {
           method: "POST",
           headers: { "content-type": "application/json" },

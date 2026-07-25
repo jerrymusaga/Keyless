@@ -8,6 +8,7 @@ import {ExchangeRule} from "../src/rules/ExchangeRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
+import {FxrpMintRule} from "../src/rules/FxrpMintRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
@@ -374,6 +375,68 @@ contract KeylessAccountsTest is Test {
         vm.prank(agent);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "budget period ended"));
         accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("c"));
+    }
+
+    // --- FXRP mint rule: the undrainable on-ramp -----------------------------
+
+    string constant CORE_VAULT = "rDhpmiPq4BVBDWMVdSrmkgt8thKyRzGV1p";
+
+    function test_fxrpMint_paysCoreVaultWithOwnerMemo() public {
+        bytes32 id = _wallet(alice, "onramp");
+        FxrpMintRule rule = new FxrpMintRule(address(accounts), CORE_VAULT);
+        address flareRecipient = address(0xc0fFee1234567890123456789012345678901234);
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, flareRecipient);
+        vm.stopPrank();
+
+        // the memo is exactly DIRECT_MINTING(0x4642505266410018) | zero(4) | recipient(20)
+        bytes32 memo = rule.mintMemo(flareRecipient);
+        assertEq(memo, bytes32((uint256(0x4642505266410018) << 192) | uint256(uint160(flareRecipient))));
+
+        // permissionless: anyone can push the mint payment, it can only go to the core vault with the memo
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, memo);
+        assertEq(tee.lastRecipient(), CORE_VAULT);
+        assertEq(tee.lastAmount(), 20_000_000);
+    }
+
+    function test_fxrpMint_rejectsNonCoreVaultRecipient() public {
+        bytes32 id = _wallet(alice, "onramp2");
+        FxrpMintRule rule = new FxrpMintRule(address(accounts), CORE_VAULT);
+        address flareRecipient = address(0xBEEF);
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, flareRecipient);
+        vm.stopPrank();
+
+        // even with a valid mint memo, it can only pay the core vault — not a thief's address
+        bytes32 memo = rule.mintMemo(flareRecipient);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "must pay the FXRP core vault"));
+        accounts.pay{value: FEE}(id, ATTACKER, 20_000_000, memo);
+    }
+
+    function test_fxrpMint_rejectsMemoForDifferentRecipient() public {
+        bytes32 id = _wallet(alice, "onramp3");
+        FxrpMintRule rule = new FxrpMintRule(address(accounts), CORE_VAULT);
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, address(0xA11CE));
+        vm.stopPrank();
+
+        // a memo crediting someone else's Flare address is rejected — mints can only land at the owner's
+        bytes32 wrongMemo = rule.mintMemo(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "wrong mint memo"));
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, wrongMemo);
+    }
+
+    function test_fxrpMint_rejectsBeforeConfigure() public {
+        bytes32 id = _wallet(alice, "onramp4");
+        FxrpMintRule rule = new FxrpMintRule(address(accounts), CORE_VAULT);
+        vm.prank(alice);
+        accounts.setRule(id, address(rule));
+        bytes32 memo = rule.mintMemo(address(0xA11CE));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no mint recipient set"));
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, memo);
     }
 
     // --- subscription rule ---------------------------------------------------
