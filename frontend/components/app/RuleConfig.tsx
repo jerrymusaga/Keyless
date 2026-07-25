@@ -17,7 +17,15 @@ function assertXrpl(a: string) {
   if (!XRPL_ADDRESS_RE.test(a.trim())) throw new Error("that isn't a valid XRPL r-address");
 }
 
-const WINDOWS: Record<string, bigint> = { "per day": 86_400n, "per week": 604_800n, "per 30 days": 2_592_000n };
+// Window units. The RateLimitRule takes `period` as raw seconds, so any count × unit works — the UI just
+// composes them. Order matters: periodLabel picks the largest unit that divides a stored period evenly.
+const UNITS: { label: string; seconds: number }[] = [
+  { label: "minutes", seconds: 60 },
+  { label: "hours", seconds: 3_600 },
+  { label: "days", seconds: 86_400 },
+  { label: "weeks", seconds: 604_800 },
+  { label: "months", seconds: 2_592_000 }, // 30 days
+];
 
 /** Rule-specific configuration. Every call here is onlyWalletOwner on-chain — signed by the control key. */
 export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
@@ -228,8 +236,20 @@ function useConfigAction() {
   return { busy, msg, run };
 }
 
-const PERIOD_LABEL: Record<string, string> = { "86400": "per day", "604800": "per week", "2592000": "per 30 days" };
-const periodLabel = (seconds: string) => PERIOD_LABEL[seconds] ?? `every ${seconds}s`;
+/** Format a stored period (seconds) into human text: "per day", "every 3 days", "every 6 hours". */
+function periodLabel(secondsStr: string) {
+  const s = Number(secondsStr);
+  if (!Number.isFinite(s) || s <= 0) return "per period";
+  for (let i = UNITS.length - 1; i >= 0; i--) {
+    const u = UNITS[i];
+    if (s % u.seconds === 0) {
+      const n = s / u.seconds;
+      const singular = u.label.slice(0, -1); // "days" -> "day"
+      return n === 1 ? `per ${singular}` : `every ${n} ${u.label}`;
+    }
+  }
+  return `every ${s}s`;
+}
 
 type RuleConfigResponse = {
   recipients?: SavedRecipient[];
@@ -313,7 +333,8 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
 function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
-  const [window, setWindow] = useState("per day");
+  const [count, setCount] = useState("1");
+  const [unit, setUnit] = useState("days");
   const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
 
@@ -333,27 +354,33 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure", [walletId, drops, WINDOWS[window]], `Allowance set: ${cap} XRP ${window}.`);
+    const n = parseInt(count, 10);
+    if (!Number.isInteger(n) || n < 1) return alert("Enter a whole number of units (e.g. every 2 weeks).");
+    const unitSec = UNITS.find((u) => u.label === unit)?.seconds ?? 86_400;
+    const period = BigInt(n) * BigInt(unitSec);
+    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure", [walletId, drops, period], `Allowance set: ${cap} XRP ${periodLabel(period.toString())}.`);
     if (ok) setRefreshKey((k) => k + 1);
   };
   return (
     <div className="space-y-4">
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
-      <Field label="Allowlist the agent's recipients" hint="Even within the allowance, it can only pay these.">
+      <Field label="Allowlist the recipients" hint="Even within the allowance, it can only pay these.">
         <div className="flex gap-2">
           <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
           <Button variant="ghost" onClick={allow} disabled={busy}>Allow</Button>
         </div>
       </Field>
-      <Field label="Spending allowance" hint="The most it can spend per window. It can never exceed this, however it's hijacked.">
-        <div className="flex gap-2">
-          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" />
+      <Field label="Spending allowance" hint="The most that can leave in each window — it can never exceed this, however the key is used. Set any window: every 6 hours, 2 weeks, 3 months…">
+        <div className="flex flex-wrap items-center gap-2">
+          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" className="w-24" />
+          <span className="text-[13px] text-mist-500">XRP per</span>
+          <NumberInput value={count} onValueChange={setCount} placeholder="1" className="w-16 text-center" />
           <select
-            value={window}
-            onChange={(e) => setWindow(e.target.value)}
-            className="rounded-lg border hairline bg-ink-950 px-3 text-sm text-mist-100 outline-none focus:border-signal-500/60"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none focus:border-signal-500/60"
           >
-            {Object.keys(WINDOWS).map((w) => <option key={w}>{w}</option>)}
+            {UNITS.map((u) => <option key={u.label} value={u.label}>{Number(count) === 1 ? u.label.slice(0, -1) : u.label}</option>)}
           </select>
           <Button onClick={setLimit} disabled={busy}>{busy ? "…" : "Set"}</Button>
         </div>
