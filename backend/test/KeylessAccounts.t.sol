@@ -247,7 +247,7 @@ contract KeylessAccountsTest is Test {
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
         rule.allow(id, EXCHANGE);
-        rule.configure(id, 10_000_000, 1 days, 0, true); // max 10 XRP/day, allowlist-only, no per-tx cap
+        rule.configure(id, 0, 10_000_000, 1 days, 0, true); // max 10 XRP/day, allowlist-only, no per-tx cap
         vm.stopPrank();
 
         // agent spends up to the cap across calls
@@ -255,7 +255,7 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, EXCHANGE, 6_000_000, bytes32("a"));
         accounts.pay{value: FEE}(id, EXCHANGE, 4_000_000, bytes32("b")); // now at 10M
         // one more drop over the cap in the same window -> blocked
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "rate limit exceeded"));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "limit exceeded"));
         accounts.pay{value: FEE}(id, EXCHANGE, 1, bytes32("c"));
         vm.stopPrank();
 
@@ -271,7 +271,7 @@ contract KeylessAccountsTest is Test {
         RateLimitRule rule = new RateLimitRule(address(accounts));
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, 10_000_000, 1 days, 0, true);
+        rule.configure(id, 0, 10_000_000, 1 days, 0, true);
         vm.stopPrank();
 
         // a hijacked agent tries the attacker; not allowlisted -> blocked regardless of the cap
@@ -285,7 +285,7 @@ contract KeylessAccountsTest is Test {
         RateLimitRule rule = new RateLimitRule(address(accounts));
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, 10_000_000, 1 days, 0, false); // open mode: no allowlist
+        rule.configure(id, 0, 10_000_000, 1 days, 0, false); // open mode: no allowlist
         vm.stopPrank();
 
         // pays a never-allowlisted address just fine, as long as it's under the cap
@@ -295,7 +295,7 @@ contract KeylessAccountsTest is Test {
 
         // still bounded by the window cap
         vm.prank(agent);
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "rate limit exceeded"));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "limit exceeded"));
         accounts.pay{value: FEE}(id, ATTACKER, 3_000_000, bytes32("b"));
     }
 
@@ -305,7 +305,7 @@ contract KeylessAccountsTest is Test {
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
         rule.allow(id, EXCHANGE);
-        rule.configure(id, 100_000_000, 1 days, 5_000_000, true); // 100 XRP/day but max 5 XRP/tx
+        rule.configure(id, 0, 100_000_000, 1 days, 5_000_000, true); // 100 XRP/day but max 5 XRP/tx
         vm.stopPrank();
 
         vm.startPrank(agent);
@@ -315,6 +315,65 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("b"));
         assertEq(tee.lastAmount(), 5_000_000);
         vm.stopPrank();
+    }
+
+    function test_rateLimit_calendarMath_exact() public {
+        RateLimitRule rule = new RateLimitRule(address(accounts));
+        // month starts (unit 2), computed independently in Python
+        assertEq(rule.calendarStart(1784993400, 2), 1782864000, "2026-07-25 -> 2026-07-01");
+        assertEq(rule.calendarStart(1773532800, 2), 1772323200, "2026-03-15 -> 2026-03-01");
+        assertEq(rule.calendarStart(1768003200, 2), 1767225600, "2026-01-10 -> 2026-01-01");
+        assertEq(rule.calendarStart(1709251140, 2), 1706745600, "2024-02-29 leap -> 2024-02-01");
+        assertEq(rule.calendarStart(1798758000, 2), 1796083200, "2026-12-31 -> 2026-12-01");
+        // week (unit 1) -> Monday 00:00; day (unit 0) -> midnight
+        assertEq(rule.calendarStart(1784993400, 1), 1784505600, "Sat 2026-07-25 -> Mon 2026-07-20");
+        assertEq(rule.calendarStart(1784993400, 0), 1784937600, "day -> 2026-07-25 00:00");
+    }
+
+    function test_rateLimit_calendarMode_resetsOnMonthBoundary() public {
+        bytes32 id = _wallet(alice, "monthly");
+        RateLimitRule rule = new RateLimitRule(address(accounts));
+        vm.warp(1784993400); // 2026-07-25
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, 1, 100_000_000, 2, 0, false); // MODE_CALENDAR, 100 XRP/month, open
+        vm.stopPrank();
+
+        vm.startPrank(agent);
+        accounts.pay{value: FEE}(id, ATTACKER, 100_000_000, bytes32("a")); // spends the month
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "limit exceeded"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1, bytes32("b"));
+        vm.stopPrank();
+
+        // cross into August -> budget refreshes on the 1st
+        vm.warp(1782864000 + 40 days); // early August 2026
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, ATTACKER, 90_000_000, bytes32("c"));
+        assertEq(tee.lastAmount(), 90_000_000);
+    }
+
+    function test_rateLimit_untilMode_hardStopsAtDate() public {
+        bytes32 id = _wallet(alice, "trip");
+        RateLimitRule rule = new RateLimitRule(address(accounts));
+        vm.warp(1784993400); // 2026-07-25
+        uint256 deadline = 1784993400 + 10 days;
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, 2, 50_000_000, deadline, 0, false); // MODE_UNTIL: 50 XRP total until the deadline
+        vm.stopPrank();
+
+        vm.startPrank(agent);
+        accounts.pay{value: FEE}(id, ATTACKER, 30_000_000, bytes32("a"));
+        // one-time budget: no reset, so the total is enforced across time
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "limit exceeded"));
+        accounts.pay{value: FEE}(id, ATTACKER, 25_000_000, bytes32("b"));
+        vm.stopPrank();
+
+        // after the deadline: hard stop, nothing more can leave
+        vm.warp(deadline + 1);
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "budget period ended"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("c"));
     }
 
     // --- subscription rule ---------------------------------------------------

@@ -47,7 +47,7 @@ export const ADDRESSES = {
 // removed to keep the templates non-overlapping. Their contracts remain deployed but unused.
 export const RULES = {
   exchange: "0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4",
-  rateLimit: "0xd4DbdfB1de4f2cCd26bddB795DCCf7A9C194dF6f", // v2: optional allowlist + per-tx cap + any window
+  rateLimit: "0x51Cc5c71350d527fDaA188B39f28DE22F4873710", // v3: rolling | calendar-aligned | until-a-date, + optional allowlist + per-tx cap
   escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
 } as const;
 
@@ -284,7 +284,7 @@ export const RULE_ABIS = {
   rateLimit: [
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
-    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" }, { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" }], outputs: [] },
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "mode", type: "uint8" }, { name: "cap", type: "uint256" }, { name: "param", type: "uint256" }, { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" }], outputs: [] },
   ],
   escrow: [
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" }], outputs: [] },
@@ -303,7 +303,7 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; protect
   },
   rateLimit: {
     name: "Spending limit",
-    tagline: "Cap how much can leave per window (any period) — to an allowlist or anyone, with an optional per-payment cap.",
+    tagline: "Cap spending — per rolling window, per calendar period, or as a one-time budget until a date — to an allowlist or anyone, with an optional per-payment cap.",
     protects: "A hijacked agent, a stolen key, a runaway subscription — none can exceed the cap or drain the account.",
     address: RULES.rateLimit,
   },

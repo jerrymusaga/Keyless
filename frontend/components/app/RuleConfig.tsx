@@ -251,11 +251,21 @@ function periodLabel(secondsStr: string) {
   return `every ${s}s`;
 }
 
+type Limit = { mode: number; cap: string; param: string; maxPerTx: string; allowlistOnly: boolean };
 type RuleConfigResponse = {
   recipients?: SavedRecipient[];
   capDrops?: string;
-  limit?: { maxPerPeriod: string; period: string; maxPerTx: string; allowlistOnly: boolean };
+  limit?: Limit;
 };
+
+const CAL_LABEL = ["day", "week", "month"]; // calendar unit index -> label
+/** Human summary of a spending limit, per its duration mode. */
+function formatLimit(l: Limit): string {
+  const cap = formatDrops(BigInt(l.cap));
+  if (l.mode === 1) return `${cap} per calendar ${CAL_LABEL[Number(l.param)] ?? "period"}`;
+  if (l.mode === 2) return `${cap} total until ${new Date(Number(l.param) * 1000).toLocaleDateString()}`;
+  return `${cap} ${periodLabel(l.param)}`; // rolling
+}
 
 /**
  * "Currently approved" — the live on-chain allowlist for a rule, read back so a refresh (or another
@@ -323,7 +333,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
         ))}
         {data?.limit && (
           <p className="text-[12px] text-mist-500">
-            Allowance: <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerPeriod))} {periodLabel(data.limit.period)}</span>
+            Allowance: <span className="text-mist-300">{formatLimit(data.limit)}</span>
             {data.limit.maxPerTx !== "0" && <> · max <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerTx))}</span>/payment</>}
             {" · "}<span className="text-mist-300">{data.limit.allowlistOnly ? "approved recipients only" : "any recipient"}</span>
           </p>
@@ -334,13 +344,18 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
   );
 }
 
+type DurationMode = "rolling" | "calendar" | "until";
+
 function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
-  const [count, setCount] = useState("1");
-  const [unit, setUnit] = useState("days");
   const [perTx, setPerTx] = useState("");
   const [allowlistOnly, setAllowlistOnly] = useState(true);
+  const [mode, setMode] = useState<DurationMode>("rolling");
+  const [count, setCount] = useState("1"); // rolling
+  const [unit, setUnit] = useState("days"); // rolling
+  const [calUnit, setCalUnit] = useState("month"); // calendar: day|week|month
+  const [until, setUntil] = useState(""); // until: yyyy-mm-dd
   const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
 
@@ -362,18 +377,41 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    const n = parseInt(count, 10);
-    if (!Number.isInteger(n) || n < 1) return alert("Enter a whole number of units (e.g. every 2 weeks).");
-    const period = BigInt(n) * BigInt(UNITS.find((u) => u.label === unit)?.seconds ?? 86_400);
+
+    // mode -> (modeNum, param, human summary)
+    let modeNum: number;
+    let param: bigint;
+    let summary: string;
+    if (mode === "rolling") {
+      const n = parseInt(count, 10);
+      if (!Number.isInteger(n) || n < 1) return alert("Enter a whole number of units (e.g. every 2 weeks).");
+      modeNum = 0;
+      param = BigInt(n) * BigInt(UNITS.find((u) => u.label === unit)?.seconds ?? 86_400);
+      summary = `${cap} XRP ${periodLabel(param.toString())}`;
+    } else if (mode === "calendar") {
+      modeNum = 1;
+      param = BigInt(CAL_LABEL.indexOf(calUnit)); // day 0, week 1, month 2
+      summary = `${cap} XRP per calendar ${calUnit}`;
+    } else {
+      modeNum = 2;
+      if (!until) return alert("Pick a date for the budget to run until.");
+      const ts = Math.floor(new Date(until).getTime() / 1000);
+      if (!ts || ts <= Math.floor(Date.now() / 1000)) return alert("Pick a date in the future.");
+      param = BigInt(ts);
+      summary = `${cap} XRP total until ${new Date(until).toLocaleDateString()}`;
+    }
+
     const perTxNote = perTxDrops > 0n ? `, max ${perTx} XRP/payment` : "";
     const whoNote = allowlistOnly ? "to approved recipients" : "to anyone";
     const ok = await run(
       RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure",
-      [walletId, drops, period, perTxDrops, allowlistOnly],
-      `Limit set: ${cap} XRP ${periodLabel(period.toString())}${perTxNote}, ${whoNote}.`,
+      [walletId, modeNum, drops, param, perTxDrops, allowlistOnly],
+      `Limit set: ${summary}${perTxNote}, ${whoNote}.`,
     );
     if (ok) setRefreshKey((k) => k + 1);
   };
+
+  const selectCls = "rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none focus:border-signal-500/60";
   return (
     <div className="space-y-4">
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
@@ -404,22 +442,67 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </Field>
       )}
 
-      <Field label="Spending allowance" hint="The most that can leave in each window — never exceeded, however the key is used. Any window: every 6 hours, 2 weeks, 3 months…">
-        <div className="flex flex-wrap items-center gap-2">
-          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" className="w-24" />
-          <span className="text-[13px] text-mist-500">XRP per</span>
-          <NumberInput value={count} onValueChange={setCount} placeholder="1" className="w-16 text-center" />
-          <select
-            value={unit}
-            onChange={(e) => setUnit(e.target.value)}
-            className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none focus:border-signal-500/60"
-          >
-            {UNITS.map((u) => <option key={u.label} value={u.label}>{Number(count) === 1 ? u.label.slice(0, -1) : u.label}</option>)}
-          </select>
+      <Field label="Amount" hint="The cap — per window for a rolling/calendar limit, or the total for an ‘until a date’ budget.">
+        <div className="flex items-center gap-2">
+          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" className="w-28" />
+          <span className="text-[13px] text-mist-500">XRP</span>
         </div>
       </Field>
 
-      <Field label="Max per payment (optional)" hint="Also cap each single payment, on top of the window budget. Leave blank for no per-payment cap.">
+      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget that hard-stops.">
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {([["rolling", "Rolling window"], ["calendar", "Calendar period"], ["until", "Until a date"]] as const).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setMode(val)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
+                  mode === val ? "border-signal-500/60 bg-signal-500/5 text-mist-100" : "hairline bg-ink-900/60 text-mist-400 hover:text-mist-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "rolling" && (
+            <div className="flex flex-wrap items-center gap-2 text-[13px] text-mist-500">
+              <span>every</span>
+              <NumberInput value={count} onValueChange={setCount} placeholder="1" className="w-16 text-center" />
+              <select value={unit} onChange={(e) => setUnit(e.target.value)} className={selectCls}>
+                {UNITS.map((u) => <option key={u.label} value={u.label}>{Number(count) === 1 ? u.label.slice(0, -1) : u.label}</option>)}
+              </select>
+              <span>from when you set it.</span>
+            </div>
+          )}
+
+          {mode === "calendar" && (
+            <div className="flex flex-wrap items-center gap-2 text-[13px] text-mist-500">
+              <span>resets each</span>
+              <select value={calUnit} onChange={(e) => setCalUnit(e.target.value)} className={selectCls}>
+                {["day", "week", "month"].map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+              <span>{calUnit === "month" ? "on the 1st" : calUnit === "week" ? "on Monday" : "at midnight"} (UTC).</span>
+            </div>
+          )}
+
+          {mode === "until" && (
+            <div className="flex flex-wrap items-center gap-2 text-[13px] text-mist-500">
+              <span>spend up to the amount until</span>
+              <input
+                type="date"
+                value={until}
+                onChange={(e) => setUntil(e.target.value)}
+                className={`${selectCls} [color-scheme:dark]`}
+              />
+              <span>then it hard-stops.</span>
+            </div>
+          )}
+        </div>
+      </Field>
+
+      <Field label="Max per payment (optional)" hint="Also cap each single payment, on top of the budget. Leave blank for no per-payment cap.">
         <NumberInput value={perTx} onValueChange={setPerTx} decimal placeholder="no per-payment cap" className="w-48" />
       </Field>
 
