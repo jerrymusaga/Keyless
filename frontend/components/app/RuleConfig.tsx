@@ -44,10 +44,10 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
   const loadSaved = useCallback(async () => {
     try {
       const [res, capValue] = await Promise.all([
-        fetch("/api/exchange", {
+        fetch("/api/rule-config", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ walletId }),
+          body: JSON.stringify({ rule: "exchange", walletId }),
           cache: "no-store",
         }),
         publicClient.readContract({
@@ -230,8 +230,91 @@ function useConfigAction() {
   return { busy, msg, run };
 }
 
+const PERIOD_LABEL: Record<string, string> = { "86400": "per day", "604800": "per week", "2592000": "per 30 days" };
+const periodLabel = (seconds: string) => PERIOD_LABEL[seconds] ?? `every ${seconds}s`;
+
+type RuleConfigResponse = {
+  recipients?: SavedRecipient[];
+  capDrops?: string;
+  limit?: { maxPerPeriod: string; period: string };
+};
+
+/**
+ * "Currently approved" — the live on-chain allowlist for a rule, read back so a refresh (or another
+ * device) shows what's saved, with a Remove button per recipient. Used by the multi-recipient rules
+ * (allowlist, rateLimit); Exchange has its own richer version with destination tags. `refreshKey` is
+ * bumped by the parent after a save so this re-reads once the explorer indexes the change.
+ */
+function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; walletId: `0x${string}`; refreshKey: number }) {
+  const { write } = useKeyless();
+  const [data, setData] = useState<RuleConfigResponse | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/rule-config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rule: ruleKey, walletId }),
+        cache: "no-store",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (Array.isArray(body.recipients)) setData(body);
+    } catch { /* transient — keep last */ }
+  }, [ruleKey, walletId]);
+
+  useEffect(() => {
+    load();
+    if (refreshKey > 0) { const t = setTimeout(load, 4500); return () => clearTimeout(t); } // reconcile after indexing
+  }, [load, refreshKey]);
+
+  const remove = async (address: string) => {
+    setErr(null);
+    setRemoving(address);
+    try {
+      await write({ address: RULES[ruleKey] as `0x${string}`, abi: RULE_ABIS[ruleKey] as never, functionName: "remove", args: [walletId, address] });
+      setData((d) => (d ? { ...d, recipients: (d.recipients ?? []).filter((r) => r.address !== address) } : d)); // optimistic
+      setTimeout(load, 4500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message.split("\n")[0] : String(e));
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const recipients = data?.recipients ?? [];
+  if (recipients.length === 0 && !data?.limit) return null;
+
+  return (
+    <Field label="Currently approved" hint="Live on-chain — the only addresses this account can pay. Remove any to revoke it.">
+      <div className="space-y-2">
+        {recipients.map((r) => (
+          <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{r.address}</code>
+            <Copy text={r.address} />
+            <button
+              type="button"
+              onClick={() => remove(r.address)}
+              disabled={removing === r.address}
+              className="shrink-0 rounded-md border border-refuse-500/40 px-2 py-1 text-[11px] text-refuse-500 transition-colors hover:bg-refuse-500/10 disabled:opacity-50"
+            >
+              {removing === r.address ? "…" : "Remove"}
+            </button>
+          </div>
+        ))}
+        {data?.limit && (
+          <p className="text-[12px] text-mist-500">Allowance: <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerPeriod))} {periodLabel(data.limit.period)}</span></p>
+        )}
+        {err && <p className="text-[12px] text-refuse-500">{err}</p>}
+      </div>
+    </Field>
+  );
+}
+
 function AllowlistConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
   const add = async () => {
     const list = addr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
@@ -242,10 +325,11 @@ function AllowlistConfig({ walletId }: { walletId: `0x${string}` }) {
       list.length === 1
         ? await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allow", [walletId, list[0]], "Address allowlisted. The account can now pay it — and nowhere else.")
         : await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allowMany", [walletId, list], `${list.length} addresses allowlisted in one transaction.`);
-    if (ok) setAddr("");
+    if (ok) { setAddr(""); setRefreshKey((k) => k + 1); }
   };
   return (
     <div className="space-y-4">
+      <SavedRecipients ruleKey="allowlist" walletId={walletId} refreshKey={refreshKey} />
       <Field
         label="Allow recipients"
         hint="The account may only ever pay addresses on this list. Paste several — one per line or comma-separated — to add them in a single transaction."
@@ -270,6 +354,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
   const [window, setWindow] = useState("per day");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
 
   const allow = async () => {
@@ -279,7 +364,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       return alert(e instanceof Error ? e.message : String(e));
     }
     const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "allow", [walletId, addr.trim()], "Recipient allowlisted.");
-    if (ok) setAddr("");
+    if (ok) { setAddr(""); setRefreshKey((k) => k + 1); }
   };
   const setLimit = async () => {
     let drops: bigint;
@@ -288,10 +373,12 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure", [walletId, drops, WINDOWS[window]], `Allowance set: ${cap} XRP ${window}.`);
+    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "configure", [walletId, drops, WINDOWS[window]], `Allowance set: ${cap} XRP ${window}.`);
+    if (ok) setRefreshKey((k) => k + 1);
   };
   return (
     <div className="space-y-4">
+      <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
       <Field label="Allowlist the agent's recipients" hint="Even within the allowance, it can only pay these.">
         <div className="flex gap-2">
           <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
@@ -320,7 +407,23 @@ function SubscriptionConfig({ walletId }: { walletId: `0x${string}` }) {
   const [merchant, setMerchant] = useState("");
   const [cap, setCap] = useState("");
   const [period, setPeriod] = useState("per 30 days");
+  const [plan, setPlan] = useState<{ merchant: string; maxPerPeriod: string; period: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
+
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: "subscription", walletId }), cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        if (!stop) setPlan(body.plan ?? null);
+      } catch { /* keep last */ }
+    };
+    load();
+    const t = refreshKey > 0 ? setTimeout(load, 4500) : undefined;
+    return () => { stop = true; if (t) clearTimeout(t); };
+  }, [walletId, refreshKey]);
 
   const configure = async () => {
     let drops: bigint;
@@ -330,11 +433,21 @@ function SubscriptionConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    await run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "configure", [walletId, merchant.trim(), drops, WINDOWS[period]], `Subscription set: up to ${cap} XRP ${period} to that merchant. Cancel anytime.`);
+    const ok = await run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "configure", [walletId, merchant.trim(), drops, WINDOWS[period]], `Subscription set: up to ${cap} XRP ${period} to that merchant. Cancel anytime.`);
+    if (ok) { setMerchant(""); setCap(""); setRefreshKey((k) => k + 1); }
   };
-  const cancel = () => run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "cancel", [walletId], "Subscription cancelled. The merchant can pull nothing further.");
+  const cancel = async () => {
+    const ok = await run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "cancel", [walletId], "Subscription cancelled. The merchant can pull nothing further.");
+    if (ok) setRefreshKey((k) => k + 1);
+  };
   return (
     <div className="space-y-4">
+      {plan && (
+        <Notice tone="ok">
+          Active subscription: up to <span className="text-mist-100">{formatDrops(BigInt(plan.maxPerPeriod))}</span> {periodLabel(plan.period)} to{" "}
+          <span className="font-mono text-mist-200">{addr(plan.merchant)}</span>. Cancel anytime below.
+        </Notice>
+      )}
       <Field label="Merchant address"><Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="rMerchant…" /></Field>
       <Field label="Cap per period" hint="The merchant can pull up to this — never more, never elsewhere.">
         <div className="flex gap-2">
@@ -357,7 +470,24 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
   const [recipient, setRecipient] = useState("");
   const [cap, setCap] = useState("");
   const [condition, setCondition] = useState("");
+  const [escrow, setEscrow] = useState<{ recipient: string; maxAmount: string; conditionHash: string; released: boolean } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const { busy, msg, run } = useConfigAction();
+
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: "escrow", walletId }), cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        if (!stop) setEscrow(body.escrow ?? null);
+      } catch { /* keep last */ }
+    };
+    load();
+    const t = refreshKey > 0 ? setTimeout(load, 4500) : undefined;
+    return () => { stop = true; if (t) clearTimeout(t); };
+  }, [walletId, refreshKey]);
+
   const configure = async () => {
     let drops: bigint;
     try {
@@ -368,10 +498,18 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
       return alert(e instanceof Error ? e.message : String(e));
     }
     const conditionHash = keccak256(toBytes(condition.trim()));
-    await run(RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure", [walletId, recipient.trim(), drops, conditionHash], "Escrow set. Funds unlock only once the condition is FDC-attested.");
+    const ok = await run(RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure", [walletId, recipient.trim(), drops, conditionHash], "Escrow set. Funds unlock only once the condition is FDC-attested.");
+    if (ok) { setRecipient(""); setCap(""); setCondition(""); setRefreshKey((k) => k + 1); }
   };
   return (
     <div className="space-y-4">
+      {escrow && (
+        <Notice tone="ok">
+          Escrow set: up to <span className="text-mist-100">{formatDrops(BigInt(escrow.maxAmount))}</span> to{" "}
+          <span className="font-mono text-mist-200">{addr(escrow.recipient)}</span> —{" "}
+          {escrow.released ? "condition proven, released ✓" : "locked until the condition is FDC-attested"}.
+        </Notice>
+      )}
       <Notice tone="info">
         Set the payee, cap, and condition here. Funds stay locked until someone submits a Flare Data
         Connector proof of the condition (proof submission is an advanced step, done outside this form).

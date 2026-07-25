@@ -287,6 +287,7 @@ export const RULE_ABIS = {
   ],
   rateLimit: [
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxPerWindow", type: "uint256" }, { name: "window", type: "uint64" }], outputs: [] },
   ],
   subscription: [
