@@ -369,6 +369,10 @@ export function xrplAccount(a: string) {
   return `${XRPL_EXPLORER}/accounts/${a}`;
 }
 
+export function xrplTx(hash: string) {
+  return `${XRPL_EXPLORER}/transactions/${hash}`;
+}
+
 export function formatDrops(drops: bigint) {
   return `${(Number(drops) / 1_000_000).toLocaleString(undefined, {
     maximumFractionDigits: 6,

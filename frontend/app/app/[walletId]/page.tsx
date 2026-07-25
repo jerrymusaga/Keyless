@@ -20,6 +20,7 @@ import {
   addr,
   explorerAddress,
   xrplAccount,
+  xrplTx,
   formatDrops,
   type RuleKey,
 } from "@/lib/keyless";
@@ -367,21 +368,45 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string; tx?: string } | null>(null);
 
   const pay = async () => {
     setMsg(null);
-    if (!XRPL_ADDRESS_RE.test(to.trim())) return setMsg({ tone: "error", text: "Enter a valid XRPL r-address." });
+    const toClean = to.trim();
+    if (!XRPL_ADDRESS_RE.test(toClean)) return setMsg({ tone: "error", text: "Enter a valid XRPL r-address." });
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) return setMsg({ tone: "error", text: "Enter an amount in XRP." });
     const drops = BigInt(Math.round(n * 1e6));
     setBusy(true);
     try {
       await ensureFunded();
+      // Snapshot existing outgoing payments so we can recognise the NEW one once it settles on XRPL.
+      const seen = new Set<string>();
+      try { (await getRecentPayments(xrpl)).forEach((t) => seen.add(t.hash)); } catch { /* transient */ }
+
       const ref = toHex(crypto.getRandomValues(new Uint8Array(32)));
-      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, to.trim(), drops, ref], value: INIT_FEE });
-      setMsg({ tone: "info", text: "Authorized. The enclave is signing and submitting to XRPL — your balance updates in a few seconds." });
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, toClean, drops, ref], value: INIT_FEE });
+
+      // On-chain authorization succeeded. The enclave now signs + submits async, so re-enable the form
+      // and watch the ledger for the settled payment rather than leaving the user on "Authorized…" forever.
+      setMsg({ tone: "info", text: "Authorized — the enclave is signing and submitting to XRPL. Confirming settlement…" });
       setTo(""); setAmount("");
+      setBusy(false);
+
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        let txs: XrplTx[] = [];
+        try { txs = await getRecentPayments(xrpl); } catch { continue; }
+        const hit = txs.find((t) => t.outgoing && !seen.has(t.hash) && t.destination === toClean && t.amountDrops === drops);
+        if (hit) {
+          setMsg({ tone: "ok", text: `✓ Sent — ${n} XRP delivered to ${addr(toClean)}.`, tx: hit.hash });
+          return;
+        }
+      }
+      // Don't claim failure — the authorization landed; XRPL just hasn't shown the tx yet.
+      setMsg({ tone: "info", text: "Submitted — taking a little longer than usual to confirm on XRPL. It'll appear under “Recent payments” below once it settles." });
+      return;
     } catch (e) {
       // A contract revert here is the POLICY DOING ITS JOB — celebrate it, don't show a scary error.
       // Anything else (short fee, network) is a real error.
@@ -427,7 +452,21 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
           <Button onClick={pay} disabled={busy || !xrpl}>{busy ? "…" : "Pay"}</Button>
         </div>
       </div>
-      {msg && <div className="mt-3"><Notice tone={msg.tone === "info" ? "info" : msg.tone}>{msg.text}</Notice></div>}
+      {msg && (
+        <div className="mt-3">
+          <Notice tone={msg.tone}>
+            {msg.text}
+            {msg.tx && (
+              <>
+                {" "}
+                <a href={xrplTx(msg.tx)} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2 hover:text-mist-100">
+                  View on XRPL ↗
+                </a>
+              </>
+            )}
+          </Notice>
+        </div>
+      )}
     </Card>
   );
 }
