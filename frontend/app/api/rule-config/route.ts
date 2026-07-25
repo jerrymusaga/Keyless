@@ -32,11 +32,6 @@ const E = {
   limitConfigured: { type: "event", name: "LimitConfigured", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" },
   ] } as AbiEvent,
-  planConfigured: { type: "event", name: "PlanConfigured", inputs: [
-    { name: "walletId", type: "bytes32", indexed: true }, { name: "merchant", type: "string" },
-    { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" },
-  ] } as AbiEvent,
-  planCancelled: { type: "event", name: "PlanCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
   escrowConfigured: { type: "event", name: "EscrowConfigured", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
     { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" },
@@ -80,9 +75,9 @@ export async function POST(req: Request) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(walletId ?? "")) return Response.json({ error: "invalid walletId" }, { status: 400 });
 
   try {
-    if (rule === "exchange" || rule === "allowlist" || rule === "rateLimit") {
+    if (rule === "exchange" || rule === "rateLimit") {
       const allowEv = rule === "exchange" ? E.allowedTagged : E.allowed;
-      const extra = rule === "exchange" ? [E.maxPerTxSet] : rule === "rateLimit" ? [E.limitConfigured] : [];
+      const extra = rule === "exchange" ? [E.maxPerTxSet] : [E.limitConfigured];
       const events = await replay(rule, [allowEv, E.removed, ...extra], walletId);
       const map = new Map<string, { requireTag: boolean; tag: number }>();
       let capDrops: string | undefined;
@@ -95,16 +90,6 @@ export async function POST(req: Request) {
       }
       const recipients = [...map.entries()].map(([address, v]) => ({ address, requireTag: v.requireTag, tag: v.tag }));
       return Response.json({ recipients, capDrops, limit });
-    }
-
-    if (rule === "subscription") {
-      const events = await replay(rule, [E.planConfigured, E.planCancelled], walletId);
-      let plan: { merchant: string; maxPerPeriod: string; period: string } | null = null;
-      for (const e of events) {
-        if (e.ev.name === "PlanConfigured") plan = { merchant: String(e.args.merchant), maxPerPeriod: String(e.args.maxPerPeriod), period: String(e.args.period) };
-        else plan = null; // PlanCancelled
-      }
-      return Response.json({ plan });
     }
 
     // escrow

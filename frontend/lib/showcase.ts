@@ -1,6 +1,12 @@
 import { encodeFunctionData, BaseError, ContractFunctionRevertedError } from "viem";
 import { publicClient } from "./clients";
-import { ADDRESSES, RULES, type RuleKey } from "./keyless";
+import { ADDRESSES, RULES } from "./keyless";
+
+// The Exchange-&-allowlist demo account below was provisioned on the standalone AllowlistRule, which is
+// now folded into ExchangeRule (allowlist == exchange with no tag/cap) and no longer a pickable template.
+// The contract stays deployed, so the read-only dry-run still faithfully demonstrates the allowlist
+// behaviour. Hardcoded here rather than via RULES since it's no longer in the template map.
+const DEPRECATED_ALLOWLIST_RULE = "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2" as const;
 
 /**
  * The engine behind the no-login showcase (/see). Each "try" is a READ-ONLY dry-run of the real
@@ -65,7 +71,7 @@ export const XRP = 1_000_000n;
 export type Scenario = { label: string; recipient: string; amountXrp: number; attack?: boolean };
 
 export type Demo = {
-  key: RuleKey;
+  key: string;
   name: string;
   walletId: `0x${string}`;
   rule: `0x${string}`;
@@ -80,10 +86,10 @@ export type Demo = {
  *  deterministic (walletIdFor(deployer, fixed salt)), so they're stable. */
 export const DEMOS: Demo[] = [
   {
-    key: "allowlist",
-    name: "Exchange-only",
+    key: "exchange",
+    name: "Exchange & allowlist",
     walletId: "0x3c555a3896ec2481f3ef5f5025f85fcc3bccafc2d9f8c8b3089442b931693a54",
-    rule: RULES.allowlist,
+    rule: DEPRECATED_ALLOWLIST_RULE,
     config: "May only pay one allowlisted address: rw15K…VDMC (a demo exchange).",
     scene: "A savings account that can only ever pay your exchange. Try to send it somewhere else.",
     presets: [
@@ -93,7 +99,7 @@ export const DEMOS: Demo[] = [
   },
   {
     key: "rateLimit",
-    name: "Agent wallet",
+    name: "Spending limit",
     walletId: "0xdc2006bef11900f063e4b8d1f6d2d54d5214798aae5a8f6e2e5eec8ab6a1019a",
     rule: RULES.rateLimit,
     config: "Allowlisted recipient + a cap of 10 XRP per day.",
@@ -102,19 +108,6 @@ export const DEMOS: Demo[] = [
       { label: "Spend 5 XRP to the exchange", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 5 },
       { label: "A hijacked bot tries 50 XRP", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 50, attack: true },
       { label: "…and tries a new address", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 5, attack: true },
-    ],
-  },
-  {
-    key: "subscription",
-    name: "Subscription",
-    walletId: "0x83644e7006bf38a22c3413a6acc61b3207adc8a23f8a7e0d7aed4ba1819cc659",
-    rule: RULES.subscription,
-    config: "One merchant (rand…F3dv) may pull ≤ 9.99 XRP / 30 days. Nothing else.",
-    scene: "A subscription. The merchant can pull up to 9.99 XRP — try to overcharge or redirect it.",
-    presets: [
-      { label: "Merchant charges 9.99 XRP", recipient: "randbAijaVXWYaMxLEvSv8twud84xUF3dv", amountXrp: 9.99 },
-      { label: "Merchant tries 500 XRP", recipient: "randbAijaVXWYaMxLEvSv8twud84xUF3dv", amountXrp: 500, attack: true },
-      { label: "Merchant tries a different payee", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 9.99, attack: true },
     ],
   },
   {

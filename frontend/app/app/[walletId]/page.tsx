@@ -297,11 +297,9 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
         const b = await res.json().catch(() => ({}));
         const ok = Array.isArray(b.recipients)
           ? b.recipients.length > 0
-          : ruleKey === "subscription"
-            ? !!b.plan
-            : ruleKey === "escrow"
-              ? !!b.escrow
-              : false;
+          : ruleKey === "escrow"
+            ? !!b.escrow
+            : false;
         if (!stop) setConfigured(ok);
       } catch {
         if (!stop) setConfigured(null); // couldn't verify — stay locked-out (fail closed on an irreversible action)

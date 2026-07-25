@@ -27,7 +27,7 @@ export function TrustBar() {
   );
 }
 
-const ORDER: RuleKey[] = ["allowlist", "rateLimit", "subscription", "escrow"];
+const ORDER: RuleKey[] = ["exchange", "rateLimit", "escrow"];
 
 export function Features() {
   return (
@@ -162,7 +162,7 @@ export function FinalCTA() {
 }
 
 function RuleIcon({ k }: { k: RuleKey }) {
-  const map: Record<RuleKey, string> = { exchange: "🏦", allowlist: "✅", rateLimit: "🤖", subscription: "🔁", escrow: "📦" };
+  const map: Record<RuleKey, string> = { exchange: "🏦", rateLimit: "🤖", escrow: "📦" };
   return (
     <span className="flex size-9 items-center justify-center rounded-lg border hairline bg-ink-850 text-base" aria-hidden="true">
       {map[k]}

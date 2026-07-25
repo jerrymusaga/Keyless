@@ -41,11 +41,13 @@ export const ADDRESSES = {
 } as const;
 
 /** The rule modules. Each is one readable contract; a wallet points at one. */
+// Three distinct policy primitives, one axis each: WHO can be paid (exchange), HOW MUCH over time
+// (rateLimit), and WHEN — only on a proven condition (escrow). The old `allowlist` and `subscription`
+// rules were strict subsets (exchange with no tag/cap; rateLimit with a single recipient) and were
+// removed to keep the templates non-overlapping. Their contracts remain deployed but unused.
 export const RULES = {
   exchange: "0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4",
-  allowlist: "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2",
   rateLimit: "0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d",
-  subscription: "0xA828482FaB7C149Aa6d339B31016cF0D7165AeDC",
   escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
 } as const;
 
@@ -279,20 +281,10 @@ export const RULE_ABIS = {
     { type: "function", name: "setMaxPerTx", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxDrops", type: "uint256" }], outputs: [] },
     { type: "function", name: "maxPerTx", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "uint256" }] },
   ],
-  allowlist: [
-    { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
-    { type: "function", name: "allowMany", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipients", type: "string[]" }], outputs: [] },
-    { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
-    { type: "function", name: "allowed", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes32" }], outputs: [{ type: "bool" }] },
-  ],
   rateLimit: [
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "maxPerWindow", type: "uint256" }, { name: "window", type: "uint64" }], outputs: [] },
-  ],
-  subscription: [
-    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "merchant", type: "string" }, { name: "maxPerPeriod", type: "uint256" }, { name: "period", type: "uint64" }], outputs: [] },
-    { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
   ],
   escrow: [
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" }], outputs: [] },
@@ -304,28 +296,16 @@ export const RULE_ABIS = {
 export type RuleKey = keyof typeof RULES;
 export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string }> = {
   exchange: {
-    name: "Exchange-only",
-    tagline: "Pay only the addresses you approve — each with an optional deposit tag and spend cap.",
+    name: "Exchange & allowlist",
+    tagline: "Pay only addresses you approve — with optional exchange destination tags and a per-payment cap.",
     protects: "A stolen key can't send anywhere new, or to your exchange under a different tag.",
     address: RULES.exchange,
   },
-  allowlist: {
-    name: "Allowlist",
-    tagline: "Pay only addresses you've allowlisted. Everything else is refused.",
-    protects: "A stolen key, a poisoned address, a compromised app — none can send anywhere new.",
-    address: RULES.allowlist,
-  },
   rateLimit: {
-    name: "Agent wallet",
-    tagline: "An allowance: a cap per time window, to allowlisted addresses only.",
-    protects: "A hijacked or prompt-injected agent can spend up to the cap — never drain the account.",
+    name: "Spending limit",
+    tagline: "Cap how much can leave per day, week, or month — to approved recipients only.",
+    protects: "A hijacked agent, a stolen key, a runaway subscription — none can exceed the cap or drain the account.",
     address: RULES.rateLimit,
-  },
-  subscription: {
-    name: "Subscription",
-    tagline: "One merchant may pull up to a fixed amount per period. Cancel anytime.",
-    protects: "The merchant provably cannot overcharge, redirect, or bill after you cancel.",
-    address: RULES.subscription,
   },
   escrow: {
     name: "Conditional (FDC)",

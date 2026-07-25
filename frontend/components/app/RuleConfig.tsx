@@ -22,9 +22,7 @@ const WINDOWS: Record<string, bigint> = { "per day": 86_400n, "per week": 604_80
 /** Rule-specific configuration. Every call here is onlyWalletOwner on-chain — signed by the control key. */
 export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
-  if (ruleKey === "allowlist") return <AllowlistConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
-  if (ruleKey === "subscription") return <SubscriptionConfig walletId={walletId} />;
   return <EscrowConfig walletId={walletId} />;
 }
 
@@ -312,44 +310,6 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
   );
 }
 
-function AllowlistConfig({ walletId }: { walletId: `0x${string}` }) {
-  const [addr, setAddr] = useState("");
-  const [refreshKey, setRefreshKey] = useState(0);
-  const { busy, msg, run } = useConfigAction();
-  const add = async () => {
-    const list = addr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-    if (list.length === 0) return alert("Enter at least one XRPL r-address.");
-    const bad = list.find((a) => !XRPL_ADDRESS_RE.test(a));
-    if (bad) return alert(`Not a valid XRPL r-address: ${bad}`);
-    const ok =
-      list.length === 1
-        ? await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allow", [walletId, list[0]], "Address allowlisted. The account can now pay it — and nowhere else.")
-        : await run(RULES.allowlist as `0x${string}`, RULE_ABIS.allowlist, "allowMany", [walletId, list], `${list.length} addresses allowlisted in one transaction.`);
-    if (ok) { setAddr(""); setRefreshKey((k) => k + 1); }
-  };
-  return (
-    <div className="space-y-4">
-      <SavedRecipients ruleKey="allowlist" walletId={walletId} refreshKey={refreshKey} />
-      <Field
-        label="Allow recipients"
-        hint="The account may only ever pay addresses on this list. Paste several — one per line or comma-separated — to add them in a single transaction."
-      >
-        <textarea
-          value={addr}
-          onChange={(e) => setAddr(e.target.value)}
-          rows={3}
-          placeholder={"rExchangeDeposit…\nrAnotherDeposit…"}
-          className="w-full rounded-lg border hairline bg-ink-950 px-3.5 py-2.5 font-mono text-sm text-mist-100 outline-none transition-colors placeholder:text-mist-500 focus:border-signal-500/60"
-        />
-        <div className="mt-2">
-          <Button onClick={add} disabled={busy}>{busy ? "…" : "Allow"}</Button>
-        </div>
-      </Field>
-      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-    </div>
-  );
-}
-
 function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
@@ -398,69 +358,6 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
           <Button onClick={setLimit} disabled={busy}>{busy ? "…" : "Set"}</Button>
         </div>
       </Field>
-      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-    </div>
-  );
-}
-
-function SubscriptionConfig({ walletId }: { walletId: `0x${string}` }) {
-  const [merchant, setMerchant] = useState("");
-  const [cap, setCap] = useState("");
-  const [period, setPeriod] = useState("per 30 days");
-  const [plan, setPlan] = useState<{ merchant: string; maxPerPeriod: string; period: string } | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const { busy, msg, run } = useConfigAction();
-
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: "subscription", walletId }), cache: "no-store" });
-        const body = await res.json().catch(() => ({}));
-        if (!stop) setPlan(body.plan ?? null);
-      } catch { /* keep last */ }
-    };
-    load();
-    const t = refreshKey > 0 ? setTimeout(load, 4500) : undefined;
-    return () => { stop = true; if (t) clearTimeout(t); };
-  }, [walletId, refreshKey]);
-
-  const configure = async () => {
-    let drops: bigint;
-    try {
-      assertXrpl(merchant);
-      drops = xrpToDrops(cap);
-    } catch (e) {
-      return alert(e instanceof Error ? e.message : String(e));
-    }
-    const ok = await run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "configure", [walletId, merchant.trim(), drops, WINDOWS[period]], `Subscription set: up to ${cap} XRP ${period} to that merchant. Cancel anytime.`);
-    if (ok) { setMerchant(""); setCap(""); setRefreshKey((k) => k + 1); }
-  };
-  const cancel = async () => {
-    const ok = await run(RULES.subscription as `0x${string}`, RULE_ABIS.subscription, "cancel", [walletId], "Subscription cancelled. The merchant can pull nothing further.");
-    if (ok) setRefreshKey((k) => k + 1);
-  };
-  return (
-    <div className="space-y-4">
-      {plan && (
-        <Notice tone="ok">
-          Active subscription: up to <span className="text-mist-100">{formatDrops(BigInt(plan.maxPerPeriod))}</span> {periodLabel(plan.period)} to{" "}
-          <span className="font-mono text-mist-200">{addr(plan.merchant)}</span>. Cancel anytime below.
-        </Notice>
-      )}
-      <Field label="Merchant address"><Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="rMerchant…" /></Field>
-      <Field label="Cap per period" hint="The merchant can pull up to this — never more, never elsewhere.">
-        <div className="flex gap-2">
-          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="9.99" />
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border hairline bg-ink-950 px-3 text-sm text-mist-100 outline-none focus:border-signal-500/60">
-            {Object.keys(WINDOWS).map((w) => <option key={w}>{w}</option>)}
-          </select>
-        </div>
-      </Field>
-      <div className="flex gap-2">
-        <Button onClick={configure} disabled={busy}>{busy ? "…" : "Set subscription"}</Button>
-        <Button variant="danger" onClick={cancel} disabled={busy}>Cancel subscription</Button>
-      </div>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );

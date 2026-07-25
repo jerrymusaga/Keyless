@@ -24,8 +24,8 @@ const TEMPLATES: Template[] = [
     tag: "for anyone holding XRP",
     rule: "Pays your exchange deposit address. Nothing else, ever.",
     adversary: "Address-poisoning malware swaps the paste. A careful human still approves the wrong address — the allowlist doesn't.",
-    ruleAddr: RULES.allowlist,
-    ruleName: "AllowlistRule",
+    ruleAddr: RULES.exchange,
+    ruleName: "ExchangeRule",
     glyph: <GlyphShield />,
   },
   {
@@ -42,8 +42,8 @@ const TEMPLATES: Template[] = [
     tag: "for recurring billing",
     rule: "One merchant may pull up to a cap per period. You can cancel any time.",
     adversary: "A merchant tries to overcharge or redirect the pull. The rule caps it and pins the destination — they provably can't take more.",
-    ruleAddr: RULES.subscription,
-    ruleName: "SubscriptionRule",
+    ruleAddr: RULES.rateLimit,
+    ruleName: "RateLimitRule",
     glyph: <GlyphCycle />,
   },
   {
@@ -51,8 +51,8 @@ const TEMPLATES: Template[] = [
     tag: "for cold storage discipline",
     rule: "Only ever pays your own cold address.",
     adversary: "A 2 a.m. impulse — or a stolen key — points somewhere new. The wallet won't follow.",
-    ruleAddr: RULES.allowlist,
-    ruleName: "AllowlistRule",
+    ruleAddr: RULES.exchange,
+    ruleName: "ExchangeRule",
     glyph: <GlyphVault />,
   },
 ];
