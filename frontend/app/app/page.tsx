@@ -81,7 +81,13 @@ export default function AppHome() {
         <Button href="/app/new">+ New account</Button>
       </div>
 
-      <StatsBar />
+      {rows && rows.length > 0 && (
+        <p className="mt-3 text-[13px] text-mist-500">
+          <span className="text-mist-300">{rows.length}</span> account{rows.length !== 1 ? "s" : ""}
+          {" · "}
+          <span className="text-mist-300">{rows.filter((r) => r.rule !== ZERO_ADDRESS).length}</span> with a policy
+        </p>
+      )}
 
       {lowGas && (
         <div className="mt-6">
@@ -147,35 +153,6 @@ function AccountRow({ row }: { row: Row }) {
         <span className="text-mist-500">→</span>
       </div>
     </Link>
-  );
-}
-
-function StatsBar() {
-  const [s, setS] = useState<{ available: boolean; totalAccounts?: number; activeAccounts?: number } | null>(null);
-
-  useEffect(() => {
-    fetch("/api/stats", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setS(d))
-      .catch(() => {});
-  }, []);
-
-  // Hide entirely until the contract exposes the counters (pre-redeploy), so we never show a broken bar.
-  if (s && !s.available) return null;
-
-  const stat = (value: number | undefined, label: string) => (
-    <div className="flex-1 px-5 py-4">
-      <div className="font-mono text-2xl text-mist-100">{value === undefined ? "—" : value.toLocaleString()}</div>
-      <div className="mt-0.5 text-[12px] text-mist-400">{label}</div>
-    </div>
-  );
-
-  return (
-    <div className="mt-6 flex items-center divide-x divide-ink-800 rounded-xl border hairline bg-ink-900/50">
-      {stat(s?.totalAccounts, "Accounts created")}
-      {stat(s?.activeAccounts, "Active (with a policy)")}
-      <div className="hidden px-5 text-[11px] text-mist-500 sm:block">live on Coston2</div>
-    </div>
   );
 }
 

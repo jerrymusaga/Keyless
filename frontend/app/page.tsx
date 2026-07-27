@@ -1,5 +1,6 @@
 import { Hero } from "@/components/Hero";
 import { TrustBar, Features, HowItWorks, SeeBand, Security, FinalCTA } from "@/components/marketing";
+import { NetworkStats } from "@/components/NetworkStats";
 import { Roadmap } from "@/components/Roadmap";
 import { Footer } from "@/components/Footer";
 
@@ -14,6 +15,7 @@ export default function Page() {
   return (
     <main>
       <Hero />
+      <NetworkStats />
       <TrustBar />
       <Features />
       <HowItWorks />
