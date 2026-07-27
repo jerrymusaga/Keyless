@@ -302,22 +302,25 @@ export const RULE_ABIS = {
 /** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
 export type RuleKey = keyof typeof RULES;
 /** `comingSoon` templates are shown in the picker but not selectable yet (they need the FDC/executor step). */
-export const RULE_META: Record<RuleKey, { name: string; tagline: string; protects: string; address: string; comingSoon?: boolean }> = {
+export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor: string; protects: string; address: string; comingSoon?: boolean }> = {
   exchange: {
     name: "Exchange & allowlist",
     tagline: "Pay only addresses you approve — with optional exchange destination tags and a per-payment cap.",
+    useFor: "Exchange deposits · paying specific people or vendors · cold-storage top-ups · a wallet that can only pay a fixed set of addresses.",
     protects: "A stolen key can't send anywhere new, or to your exchange under a different tag.",
     address: RULES.exchange,
   },
   rateLimit: {
     name: "Spending limit",
     tagline: "Cap spending — per rolling window, per calendar period, or as a one-time budget until a date — to an allowlist or anyone, with an optional per-payment cap.",
+    useFor: "Bot / AI-agent budgets · an allowance (kid, team, contractor) · recurring subscriptions · a savings account you can only draw down slowly.",
     protects: "A hijacked agent, a stolen key, a runaway subscription — none can exceed the cap or drain the account.",
     address: RULES.rateLimit,
   },
   escrow: {
     name: "Conditional (FDC)",
     tagline: "Pay a supplier only once Flare's Data Connector proves the condition.",
+    useFor: "Escrow · milestone / pay-on-delivery payments · releasing funds only when a real-world event is proven on-chain.",
     protects: "Funds stay locked until the world proves delivery — no early release, no wrong payee.",
     address: RULES.escrow,
     comingSoon: true,
@@ -325,10 +328,20 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; protect
   fxrpMint: {
     name: "FXRP mint",
     tagline: "Convert XRP to FXRP on Flare — the account can only ever mint to your Flare address, nowhere else.",
+    useFor: "An undrainable on-ramp: turn XRP into FXRP to use in Flare DeFi, where it can only ever land in your own wallet.",
     protects: "A stolen key can't move your XRP out — it can only turn it into FXRP in your own Flare wallet.",
     address: RULES.fxrpMint,
     comingSoon: true,
   },
+};
+
+/** Older/retired rule deployments, mapped to a display name so accounts created on them still label
+ *  correctly (rather than falling back to "custom policy"). Keys are lowercased addresses. */
+export const LEGACY_RULE_NAMES: Record<string, string> = {
+  "0xded9303f6b72bd88c3f6a34414ee2935422ab27d": "Spending limit", // RateLimitRule v1
+  "0xd4dbdfb1de4f2ccd26bddb795dccf7a9c194df6f": "Spending limit", // RateLimitRule v2
+  "0x7ae1dc15acd4766132ac11a67dfdcde03bd8dec2": "Allowlist", // retired AllowlistRule (folded into Exchange)
+  "0xa828482fab7c149aa6d339b31016cf0d7165aedc": "Subscription", // retired SubscriptionRule (folded into Spending limit)
 };
 
 export const TEE_MANAGER_ABI = [

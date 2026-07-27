@@ -7,7 +7,7 @@ import { Button, Card, Notice, Spinner } from "@/components/app/ui";
 import { ControlKey } from "@/components/app/ControlKey";
 import { listAccounts, type LocalAccount } from "@/lib/accounts";
 import { publicClient } from "@/lib/clients";
-import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, addr, xrplAccount, ZERO_ADDRESS } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, LEGACY_RULE_NAMES, addr, xrplAccount, ZERO_ADDRESS } from "@/lib/keyless";
 
 type Row = LocalAccount & { rule: `0x${string}`; xrplAddress: string };
 
@@ -15,7 +15,8 @@ function ruleName(rule: string): string | null {
   const hit = (Object.keys(RULES) as (keyof typeof RULES)[]).find(
     (k) => RULES[k].toLowerCase() === rule.toLowerCase(),
   );
-  return hit ? RULE_META[hit].name : null;
+  // Fall back to older/retired rule deployments so those accounts still show their real policy name.
+  return hit ? RULE_META[hit].name : (LEGACY_RULE_NAMES[rule.toLowerCase()] ?? null);
 }
 
 export default function AppHome() {

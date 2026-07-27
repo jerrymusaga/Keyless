@@ -39,6 +39,7 @@ export default function NewAccount() {
   const create = async () => {
     setError(null);
     setGasHelp(null);
+    if (!label.trim()) return setError("Give your account a name first — it's how you'll tell your accounts apart.");
     try {
       // 0. make sure the control key can pay gas + the INIT fee. If the gas sponsor is off (no
       // FAUCET_KEY) or dry, don't barrel into createWallet and fail on gas — point the user at the
@@ -64,7 +65,7 @@ export default function NewAccount() {
       // The updated scaffold dropped on-chain fee quoting; attach a fixed INIT_FEE (excess refunds).
       setBusy("Creating your account (generating a key inside the enclave)…");
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "createWallet", args: [salt], value: INIT_FEE });
-      addAccount(address, { walletId, label: label.trim() || "Untitled account", salt, createdAt: Date.now() });
+      addAccount(address, { walletId, label: label.trim(), salt, createdAt: Date.now() });
 
       // 3. point it at the chosen rule
       setBusy("Applying your policy…");
@@ -94,7 +95,7 @@ export default function NewAccount() {
 
       <div className="mt-8 space-y-6">
         <Card>
-          <Field label="Account name" hint="Just for you — e.g. “Exchange savings” or “Trading bot”.">
+          <Field label="Account name" hint="Required — how you'll tell your accounts apart. e.g. “Exchange savings”, “Trading bot”, “Kid's allowance”.">
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Exchange savings" />
           </Field>
         </Card>
@@ -123,6 +124,9 @@ export default function NewAccount() {
                     {active && !disabled && <span className="text-signal-400">✓</span>}
                   </div>
                   <p className="mt-1.5 text-[13px] leading-relaxed text-mist-400">{meta.tagline}</p>
+                  <p className="mt-2 text-[11px] leading-relaxed text-mist-500">
+                    <span className="text-mist-400">Good for:</span> {meta.useFor}
+                  </p>
                 </button>
               );
             })}
@@ -149,7 +153,7 @@ export default function NewAccount() {
         {error && <Notice tone="error">{error}</Notice>}
 
         <div className="flex items-center gap-4">
-          <Button onClick={create} disabled={!!busy}>
+          <Button onClick={create} disabled={!!busy || !label.trim()}>
             {busy ? "Working…" : "Create account →"}
           </Button>
           {busy && <Spinner label={busy} />}
