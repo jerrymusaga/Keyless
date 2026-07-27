@@ -306,14 +306,14 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
   exchange: {
     name: "Exchange & allowlist",
     tagline: "Pay only addresses you approve — with optional exchange destination tags and a per-payment cap.",
-    useFor: "Exchange deposits · paying specific people or vendors · cold-storage top-ups · a wallet that can only pay a fixed set of addresses.",
+    useFor: "Exchange / CEX deposits (pins the required destination tag) · trading through a centralized exchange · paying specific people or vendors · cold-storage top-ups.",
     protects: "A stolen key can't send anywhere new, or to your exchange under a different tag.",
     address: RULES.exchange,
   },
   rateLimit: {
     name: "Spending limit",
     tagline: "Cap spending — per rolling window, per calendar period, or as a one-time budget until a date — to an allowlist or anyone, with an optional per-payment cap.",
-    useFor: "Bot / AI-agent budgets · an allowance (kid, team, contractor) · recurring subscriptions · a savings account you can only draw down slowly.",
+    useFor: "Trading bots & AI-agent budgets · an allowance (kid, team, contractor) · recurring subscriptions · a savings account you can only draw down slowly.",
     protects: "A hijacked agent, a stolen key, a runaway subscription — none can exceed the cap or drain the account.",
     address: RULES.rateLimit,
   },

@@ -416,6 +416,24 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   };
 
   const selectCls = "rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none focus:border-signal-500/60";
+
+  // Live plain-English summary of what "Set limit" will apply — closes the amount/window disconnect.
+  const preview = (() => {
+    if (!cap.trim()) return null;
+    let window: string;
+    if (mode === "rolling") {
+      const n = Math.max(1, parseInt(count, 10) || 1);
+      window = n === 1 ? `per ${unit.slice(0, -1)}` : `every ${n} ${unit}`;
+    } else if (mode === "calendar") {
+      window = `per calendar ${calUnit}`;
+    } else {
+      window = until ? `total, until ${new Date(until).toLocaleDateString(undefined, { timeZone: "UTC" })} (UTC)` : "total, until a date you pick";
+    }
+    const who = allowlistOnly ? "to approved recipients" : "to anyone";
+    const perTxNote = perTx.trim() ? `, max ${perTx} XRP per payment` : "";
+    return `Up to ${cap} XRP ${window} ${who}${perTxNote}.`;
+  })();
+
   return (
     <div className="space-y-4">
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
@@ -472,7 +490,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
           {mode === "rolling" && (
             <div className="flex flex-wrap items-center gap-2 text-[13px] text-mist-500">
-              <span>every</span>
+              <span>the budget resets every</span>
               <NumberInput value={count} onValueChange={setCount} placeholder="1" className="w-16 text-center" />
               <select value={unit} onChange={(e) => setUnit(e.target.value)} className={selectCls}>
                 {UNITS.map((u) => <option key={u.label} value={u.label}>{Number(count) === 1 ? u.label.slice(0, -1) : u.label}</option>)}
@@ -509,6 +527,12 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       <Field label="Max per payment (optional)" hint="Also cap each single payment, on top of the budget. Leave blank for no per-payment cap.">
         <NumberInput value={perTx} onValueChange={setPerTx} decimal placeholder="no per-payment cap" className="w-48" />
       </Field>
+
+      {preview && (
+        <div className="rounded-lg border border-signal-500/30 bg-signal-500/5 px-4 py-3 text-[13px] text-mist-200">
+          <span className="text-mist-400">This limit → </span>{preview}
+        </div>
+      )}
 
       <Button onClick={setLimit} disabled={busy}>{busy ? "Saving…" : "Set limit"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
