@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { keccak256, toBytes } from "viem";
+import { keccak256, toBytes, toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
@@ -672,23 +672,80 @@ function FxrpMintConfig({ walletId }: { walletId: `0x${string}` }) {
   );
 }
 
-function FxrpDefiConfig(_props: { walletId: `0x${string}` }) {
-  // The rule is deployed & gated on-chain (blocks FXRP transfer-out); the action UX below is wired next,
-  // once the Flare Smart Account executor pickup is confirmed. Shown "Soon" in the picker for now.
+// FSA XRPL provider wallet (Coston2) — every instruction is a payment here, carrying the reference.
+const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
+const FIRELIGHT_VAULT = 1; // default Flare yield vault id (type 1 -> deposit 0x11 / redeem 0x12)
+const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
+
+/** Build the 32-byte FSA reference, mirroring FxrpDefiRule / PaymentReferenceParser. */
+const fsaRef = (id: number, value: bigint, vaultId: number): `0x${string}` =>
+  toHex((BigInt(id) << 248n) | (value << 160n) | (BigInt(vaultId) << 128n), { size: 32 });
+
+/**
+ * The three-verb FXRP-in-DeFi panel. Each verb signs one XRPL payment to the FSA wallet carrying a gated
+ * instruction; Flare's executor completes it on-chain. The rule blocks the one unsafe move (transfer out),
+ * so nothing here can send FXRP to a thief. (Needs FXRP already in the account — minting is wired next.)
+ */
+function FxrpDefiConfig({ walletId }: { walletId: `0x${string}` }) {
+  const { write } = useKeyless();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  const [deposit, setDeposit] = useState("");
+  const [withdraw, setWithdraw] = useState("");
+  const [home, setHome] = useState("");
+
+  const act = async (label: string, amount: string, ref: `0x${string}`) => {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return setMsg({ tone: "error", text: "Enter an amount first." });
+    setBusy(label);
+    setMsg(null);
+    try {
+      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, FSA_WALLET, FSA_TRIGGER, ref], value: INIT_FEE });
+      setMsg({ tone: "info", text: `${label} submitted — Flare's executor completes it on-chain in a moment.` });
+    } catch (e) {
+      let reason = e instanceof Error ? e.message.split("\n")[0] : String(e);
+      if (e instanceof BaseError) {
+        const rev = e.walk((err) => err instanceof ContractFunctionRevertedError);
+        if (rev instanceof ContractFunctionRevertedError) reason = (rev.data?.args?.[0] as string) ?? rev.shortMessage;
+      }
+      setMsg({ tone: "error", text: `Blocked: ${reason}` });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const drops = (xrp: string) => BigInt(Math.round(Number(xrp) * 1e6));
+  const row = (
+    label: string, hint: string, unit: string, value: string, set: (v: string) => void, onGo: () => void,
+  ) => (
+    <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[14px] font-medium text-mist-100">{label}</p>
+          <p className="mt-0.5 text-[12px] text-mist-500">{hint}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <NumberInput value={value} onValueChange={set} decimal placeholder="0" className="w-24 text-right" />
+          <span className="text-[12px] text-mist-500">{unit}</span>
+          <Button variant="ghost" onClick={onGo} disabled={!!busy}>{busy === label ? "…" : "Go"}</Button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Notice tone="info">
-        <p className="font-medium text-mist-200">Coming soon — undrainable FXRP in Flare DeFi.</p>
-        <p className="mt-1.5">
-          Put your FXRP to work and bring it home, with the one dangerous move — sending FXRP to someone
-          else — blocked on-chain. Three simple actions:
-        </p>
-        <ul className="mt-2 space-y-1 text-[13px]">
-          <li>🌱 <span className="text-mist-200">Put FXRP to work</span> — deposit into a Flare yield vault.</li>
-          <li>↩︎ <span className="text-mist-200">Withdraw</span> — pull it back out of the vault.</li>
-          <li>🏠 <span className="text-mist-200">Bring it home</span> — redeem FXRP back to XRP on your XRPL account.</li>
-        </ul>
+        Put your FXRP to work in Flare vaults and bring it home to XRPL — sending FXRP anywhere else is blocked
+        on-chain. (Needs FXRP already in this account; minting is wired next.)
       </Notice>
+      {row("🌱 Put FXRP to work", "Deposit into a Flare yield vault.", "FXRP", deposit, setDeposit,
+        () => act("Deposit", deposit, fsaRef(0x11, drops(deposit), FIRELIGHT_VAULT)))}
+      {row("↩︎ Withdraw", "Pull FXRP back out of the vault.", "FXRP", withdraw, setWithdraw,
+        () => act("Withdraw", withdraw, fsaRef(0x12, drops(withdraw), FIRELIGHT_VAULT)))}
+      {row("🏠 Bring home to XRPL", "Redeem FXRP back to XRP on your account.", "lots", home, setHome,
+        () => act("Redeem", home, fsaRef(0x02, BigInt(Math.max(1, Math.floor(Number(home)))), 0)))}
+      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
 }
