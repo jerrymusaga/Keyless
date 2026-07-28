@@ -35,6 +35,7 @@ export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; rul
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
   if (ruleKey === "fxrpMint") return <FxrpMintConfig walletId={walletId} />;
+  if (ruleKey === "fxrpDefi") return <FxrpDefiConfig walletId={walletId} />;
   return <EscrowConfig walletId={walletId} />;
 }
 
@@ -667,6 +668,27 @@ function FxrpMintConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       )}
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+    </div>
+  );
+}
+
+function FxrpDefiConfig(_props: { walletId: `0x${string}` }) {
+  // The rule is deployed & gated on-chain (blocks FXRP transfer-out); the action UX below is wired next,
+  // once the Flare Smart Account executor pickup is confirmed. Shown "Soon" in the picker for now.
+  return (
+    <div className="space-y-4">
+      <Notice tone="info">
+        <p className="font-medium text-mist-200">Coming soon — undrainable FXRP in Flare DeFi.</p>
+        <p className="mt-1.5">
+          Put your FXRP to work and bring it home, with the one dangerous move — sending FXRP to someone
+          else — blocked on-chain. Three simple actions:
+        </p>
+        <ul className="mt-2 space-y-1 text-[13px]">
+          <li>🌱 <span className="text-mist-200">Put FXRP to work</span> — deposit into a Flare yield vault.</li>
+          <li>↩︎ <span className="text-mist-200">Withdraw</span> — pull it back out of the vault.</li>
+          <li>🏠 <span className="text-mist-200">Bring it home</span> — redeem FXRP back to XRP on your XRPL account.</li>
+        </ul>
+      </Notice>
     </div>
   );
 }

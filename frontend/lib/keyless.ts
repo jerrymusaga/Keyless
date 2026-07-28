@@ -50,6 +50,7 @@ export const RULES = {
   rateLimit: "0x51Cc5c71350d527fDaA188B39f28DE22F4873710", // v3: rolling | calendar-aligned | until-a-date, + optional allowlist + per-tx cap
   escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
   fxrpMint: "0xaa0405f9DCFa83517469D133143351a07586a23f", // safe FXRP mint: XRP -> FXRP to your Flare address only
+  fxrpDefi: "0xB5Ab70B41805f24C995f3ade22a7a533721cB926", // undrainable FXRP in Flare Smart Accounts: vault ops + redeem-home, transfer-out blocked
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -297,6 +298,11 @@ export const RULE_ABIS = {
     { type: "function", name: "coreVaultAddress", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
     { type: "function", name: "mintMemo", stateMutability: "view", inputs: [{ name: "flareRecipient", type: "address" }], outputs: [{ type: "bytes32" }] },
   ],
+  fxrpDefi: [
+    { type: "function", name: "fsaProviderWallet", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+    { type: "function", name: "redeemHomeRef", stateMutability: "pure", inputs: [{ name: "lots", type: "uint80" }], outputs: [{ type: "bytes32" }] },
+    { type: "function", name: "vaultRef", stateMutability: "pure", inputs: [{ name: "id", type: "uint8" }, { name: "vaultId", type: "uint16" }, { name: "value", type: "uint80" }], outputs: [{ type: "bytes32" }] },
+  ],
 } as const;
 
 /** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
@@ -331,6 +337,14 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
     useFor: "An undrainable on-ramp: turn XRP into FXRP to use in Flare DeFi, where it can only ever land in your own wallet.",
     protects: "A stolen key can't move your XRP out — it can only turn it into FXRP in your own Flare wallet.",
     address: RULES.fxrpMint,
+    comingSoon: true,
+  },
+  fxrpDefi: {
+    name: "FXRP in DeFi",
+    tagline: "Put your FXRP to work in Flare vaults and bring it home to XRPL — it can never be sent anywhere else.",
+    useFor: "Earn yield on your XRP through Flare DeFi · move value to Flare and back safely · an undrainable DeFi account.",
+    protects: "Even a stolen key can only stake your FXRP or redeem it home — never transfer it out to a thief.",
+    address: RULES.fxrpDefi,
     comingSoon: true,
   },
 };

@@ -17,7 +17,7 @@ import {
 import { publicClient } from "@/lib/clients";
 import { toHex } from "viem";
 
-const ORDER: RuleKey[] = ["exchange", "rateLimit", "fxrpMint", "escrow"];
+const ORDER: RuleKey[] = ["exchange", "rateLimit", "fxrpMint", "fxrpDefi", "escrow"];
 
 export default function NewAccount() {
   const router = useRouter();
