@@ -9,6 +9,7 @@ import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
 import {FxrpMintRule} from "../src/rules/FxrpMintRule.sol";
+import {FxrpDefiRule} from "../src/rules/FxrpDefiRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
@@ -437,6 +438,63 @@ contract KeylessAccountsTest is Test {
         bytes32 memo = rule.mintMemo(address(0xA11CE));
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no mint recipient set"));
         accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, memo);
+    }
+
+    // --- FXRP DeFi rule (Flare Smart Accounts, undrainable) ------------------
+
+    string constant FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
+    uint256 constant FSA_MAX_TRIGGER = 10_000_000; // 10 XRP
+
+    function _fxrpDefi(bytes32 id) internal returns (FxrpDefiRule rule) {
+        rule = new FxrpDefiRule(address(accounts), FSA_WALLET, FSA_MAX_TRIGGER);
+        vm.prank(alice);
+        accounts.setRule(id, address(rule));
+    }
+
+    function test_fxrpDefi_allowsRedeemHomeAndVaultOps() public {
+        bytes32 id = _wallet(alice, "defi");
+        FxrpDefiRule rule = _fxrpDefi(id);
+
+        // redeem FXRP -> XRP home (0x02) is allowed
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, rule.redeemHomeRef(5));
+        assertEq(tee.lastRecipient(), FSA_WALLET);
+
+        // deposit into a Firelight vault (0x11) is allowed
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, rule.vaultRef(0x11, 2, 5_000_000));
+        // redeem from an Upshift vault (0x22 requestRedeem) is allowed
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, rule.vaultRef(0x22, 3, 1_000_000));
+    }
+
+    function test_fxrpDefi_blocksTransferOut() public {
+        bytes32 id = _wallet(alice, "defi");
+        FxrpDefiRule rule = _fxrpDefi(id);
+        // instruction 0x01 (transfer FXRP to an arbitrary address) is the drain vector — always refused
+        bytes32 transferRef = bytes32((uint256(0x01) << 248) | (uint256(9_000_000) << 160) | uint256(uint160(address(0xBAD))));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "FXRP transfer-out is not allowed"));
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, transferRef);
+    }
+
+    function test_fxrpDefi_blocksWrongRecipientAndUnknownInstruction() public {
+        bytes32 id = _wallet(alice, "defi");
+        FxrpDefiRule rule = _fxrpDefi(id);
+        bytes32 redeemRef = rule.redeemHomeRef(5); // precompute (else expectRevert binds to this staticcall)
+
+        // must pay the FSA provider wallet, not some other address
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "must pay your FSA account"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1000, redeemRef);
+
+        // minting instructions (0x00) are out of scope for this rule
+        bytes32 mintRef = bytes32((uint256(0x00) << 248) | (uint256(5) << 160));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "instruction not permitted"));
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, mintRef);
+    }
+
+    function test_fxrpDefi_capsTriggerAmount() public {
+        bytes32 id = _wallet(alice, "defi");
+        FxrpDefiRule rule = _fxrpDefi(id);
+        bytes32 redeemRef = rule.redeemHomeRef(5); // precompute (else expectRevert binds to this staticcall)
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "trigger amount too large"));
+        accounts.pay{value: FEE}(id, FSA_WALLET, FSA_MAX_TRIGGER + 1, redeemRef);
     }
 
     // --- subscription rule ---------------------------------------------------
