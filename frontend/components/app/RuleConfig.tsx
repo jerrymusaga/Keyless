@@ -603,6 +603,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [depositAmt, setDepositAmt] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
+  const [statusFor, setStatusFor] = useState<"mint" | "deposit" | "redeem" | null>(null); // which action the msg belongs to
 
   // Whole FXRP portfolio, from one ReaderFacet.getBalances call.
   const liquid = portfolio ? portfolio.fXrp.balance : null;
@@ -681,6 +682,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // it and rejects any other target). We build the exact same memo the rule expects.
   const mint = async () => {
     setMsg(null);
+    setStatusFor("mint");
     if (!pa) return;
     let drops: bigint;
     try {
@@ -738,6 +740,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // Every action is guarded against its real funding source — no firing a trigger + fee for something the
   // executor can't complete. Deposit/redeem draw from liquid FXRP; withdraw draws from that vault's position.
   const runDeposit = () => {
+    setStatusFor("deposit");
     const amt = uba(depositAmt);
     if (!(amt > 0n)) return setMsg({ tone: "error", text: "Enter an amount of FXRP." });
     if (liquid !== null && amt > liquid) return setMsg({ tone: "error", text: `You only have ${fmtFxrp(liquid)} FXRP liquid to put to work.` });
@@ -746,12 +749,28 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)));
   };
   const runRedeem = () => {
+    setStatusFor("redeem");
     const lots = Math.floor(Number(home) / LOT_FXRP);
     if (!(lots >= 1)) return setMsg({ tone: "error", text: `Bringing home works in lots of ${LOT_FXRP} FXRP — enter at least ${LOT_FXRP}.` });
     const need = BigInt(lots) * BigInt(LOT_FXRP) * 1_000_000n;
     if (liquid !== null && need > liquid) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(liquid)} FXRP liquid.` });
     act("Redeem", fsaRef(0x02, BigInt(lots), 0));
   };
+
+  // Status shown INLINE right under whichever action was triggered — so the result + "still completing"
+  // spinner are visible where you clicked, no scrolling to the top or bottom of a long panel.
+  const actionStatus = (key: "mint" | "deposit" | "redeem") =>
+    statusFor === key ? (
+      <div className="mt-3 space-y-2">
+        {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+        {settling && (
+          <div className="flex items-center gap-2 text-[12px] text-signal-400">
+            <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
+            Completing on-chain — up to ~2 min. Your balance updates on its own.
+          </div>
+        )}
+      </div>
+    ) : null;
 
   return (
     <div className="space-y-4">
@@ -801,6 +820,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               <span className="text-[13px] text-mist-500">XRP</span>
               <Button onClick={mint} disabled={!pa || !!busy}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
             </div>
+            {actionStatus("mint")}
           </div>
 
           {/* ② Put to work — vault selector */}
@@ -827,6 +847,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               <span className="text-[12px] text-mist-500">FXRP</span>
               <Button variant="ghost" onClick={runDeposit} disabled={!!busy}>{busy === "Deposit" ? "…" : "Put to work"}</Button>
             </div>
+            {actionStatus("deposit")}
           </div>
 
           {/* Borrow — coming soon. FXRP is the umbrella for putting your XRP to work on Flare; yield is live,
@@ -873,11 +894,13 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               <span className="text-[12px] text-mist-500">FXRP</span>
               <Button variant="ghost" onClick={runRedeem} disabled={!!busy}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
             </div>
+            {actionStatus("redeem")}
           </div>
         </>
       )}
 
-      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
+      {/* Errors that aren't tied to a specific action (e.g. before setup) still surface here. */}
+      {statusFor === null && msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
 }
