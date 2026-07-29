@@ -612,6 +612,14 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
     const drops = BigInt(Math.round(n * 1e6));
     setBusy(true);
     try {
+      // Guard: don't attempt a spend this account can't cover — check its XRPL balance, keeping ~1 XRP for
+      // the ledger reserve. If the balance can't be read, proceed and let the chain be the backstop.
+      try {
+        const xb = await getXrplBalance(xrpl);
+        if (!xb.funded) { setBusy(false); return setMsg({ tone: "error", text: "This account has no XRP yet — fund the deposit address above first." }); }
+        if (drops + 1_000_000n > xb.drops) { setBusy(false); return setMsg({ tone: "error", text: `This account holds ${formatDrops(xb.drops)}. Send a little less so ~1 XRP stays for the ledger reserve.` }); }
+      } catch { /* balance unreadable — proceed */ }
+
       await ensureFunded();
       // Snapshot existing outgoing payments so we can recognise the NEW one once it settles on XRPL.
       const seen = new Set<string>();
