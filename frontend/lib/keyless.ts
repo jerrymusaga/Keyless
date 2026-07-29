@@ -338,7 +338,6 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
     useFor: "An undrainable XRP↔Flare round-trip: mint FXRP into your own Flare account, put it to work in DeFi, and redeem back to XRP — safely.",
     protects: "Every step lands in your own account. A stolen key can only mint, stake, or bring funds home — never transfer FXRP out to a thief.",
     address: RULES.fxrp,
-    comingSoon: true,
   },
 };
 
