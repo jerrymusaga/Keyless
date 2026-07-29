@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useKeyless } from "@/components/app/KeylessProvider";
-import { Button, Card, Notice, Spinner } from "@/components/app/ui";
+import { motion } from "motion/react";
+import { Button, Card, Notice, Skeleton, Spinner } from "@/components/app/ui";
 import { ControlKey } from "@/components/app/ControlKey";
 import { listAccounts, type LocalAccount } from "@/lib/accounts";
 import { publicClient } from "@/lib/clients";
@@ -97,7 +98,14 @@ export default function AppHome() {
 
       <div className="mt-8 space-y-3">
         {rows === null ? (
-          <Spinner label="Reading your accounts from Coston2…" />
+          <div className="space-y-3" aria-busy="true">
+            {[0, 1].map((i) => (
+              <div key={i} className="rounded-xl border hairline bg-ink-900/60 p-5">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="mt-2.5 h-3 w-32" />
+              </div>
+            ))}
+          </div>
         ) : rows.length === 0 ? (
           <Card>
             <p className="text-sm text-mist-400">
@@ -109,7 +117,16 @@ export default function AppHome() {
             </div>
           </Card>
         ) : (
-          rows.map((r) => <AccountRow key={r.walletId} row={r} />)
+          rows.map((r, i) => (
+            <motion.div
+              key={r.walletId}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <AccountRow row={r} />
+            </motion.div>
+          ))
         )}
       </div>
 

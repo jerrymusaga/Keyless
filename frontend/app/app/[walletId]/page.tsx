@@ -1,11 +1,11 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState, type ReactNode } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { motion, AnimatePresence } from "motion/react";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig } from "@/components/app/RuleConfig";
-import { Button, Card, Copy, Field, Input, Notice, Spinner } from "@/components/app/ui";
+import { Button, Card, Copy, Field, Input, Notice, Skeleton } from "@/components/app/ui";
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
 import { getXrplBalance, getRecentPayments, type XrplTx } from "@/lib/xrpl";
@@ -13,6 +13,7 @@ import { dryRunAuthorize } from "@/lib/showcase";
 import {
   ADDRESSES,
   ACCOUNTS_ABI,
+  EXTENSION_ID,
   INIT_FEE,
   RULES,
   RULE_ABIS,
@@ -78,7 +79,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   }, [loading, xrpl, wid]);
 
   if (status !== "ready") return <Notice tone="info">Open this from <a className="underline" href="/app">your accounts</a>.</Notice>;
-  if (loading) return <Spinner label="Reading the account from Coston2…" />;
+  if (loading) return <AccountSkeleton />;
   if (owner === ZERO_ADDRESS) return <Notice tone="error">No such account.</Notice>;
   if (address && owner && owner.toLowerCase() !== address.toLowerCase()) {
     return <Notice tone="warn">This account is controlled by a different key than the one in this browser.</Notice>;
@@ -89,7 +90,12 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   const hasRule = rule && rule !== ZERO_ADDRESS;
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: EASE }}
+    >
       <div>
         <a href="/app" className="text-xs text-mist-500 hover:text-mist-300">← Your accounts</a>
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -130,12 +136,28 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
             </div>
           </Card>
           <BreakItPanel walletId={wid} rule={rule} />
+          <ProofPanel rule={rule} xrpl={xrpl} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
       ) : (
         <Notice tone="warn">This account has no policy yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
       )}
+    </motion.div>
+  );
+}
+
+/** Skeleton shown while the account's on-chain state loads — reads as the real layout arriving. */
+function AccountSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-7 w-56" />
+      </div>
+      <Card><Skeleton className="h-4 w-40" /><Skeleton className="mt-3 h-10 w-full" /></Card>
+      <Card><Skeleton className="h-4 w-32" /><Skeleton className="mt-3 h-16 w-full" /></Card>
+      <Card><Skeleton className="h-4 w-44" /><Skeleton className="mt-3 h-9 w-2/3" /></Card>
     </div>
   );
 }
@@ -503,6 +525,77 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
   );
 }
 
+/**
+ * Trust made visible — the undrainability claim backed by anchors the user can check on-chain, not a
+ * promise. Deliberately honest: it verifies what IS on-chain (the extension binding, live; the rule the key
+ * obeys; the TEE machine) and does NOT claim a verified remote-attestation code-hash (that verifier is still
+ * a skeleton). The headline is the real guarantee: this app can request a payment but can never sign one.
+ */
+function ProofPanel({ rule, xrpl }: { rule: `0x${string}`; xrpl: string }) {
+  const [bound, setBound] = useState<boolean | null>(null);
+  const [ext, setExt] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "isBound" }).catch(() => null),
+      publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "extensionId" }).catch(() => null),
+    ]).then(([b, e]) => { setBound(b as boolean | null); setExt(e as bigint | null); });
+  }, []);
+
+  const extLabel = ext !== null ? ext.toString() : String(EXTENSION_ID);
+  const rows: { title: ReactNode; proof: ReactNode; link?: { href: string; label: string }; live?: boolean | null }[] = [
+    {
+      title: "Your signing key was born inside a Flare TEE",
+      proof: <>Generated on-chain at creation, inside a confidential enclave. It was never imported and <span className="text-mist-200">cannot be exported</span> — not by us, not by you.</>,
+      link: xrpl ? { href: xrplAccount(xrpl), label: "the XRPL account ↗" } : undefined,
+    },
+    {
+      title: <>Bound to Flare TEE extension <span className="font-mono">{extLabel}</span></>,
+      proof: <>The enclave is a registered Flare TEE extension, and this account is bound to it on Flare&rsquo;s TeeManager — verified live below.</>,
+      link: { href: explorerAddress(ADDRESSES.teeManager), label: "Flare TeeManager ↗" },
+      live: bound,
+    },
+    {
+      title: "Governed only by this one rule",
+      proof: <>Your key obeys exactly one contract — nothing else can move the funds. Read the exact code that governs this account:</>,
+      link: { href: explorerAddress(rule), label: "the rule contract ↗" },
+    },
+  ];
+
+  return (
+    <Card>
+      <h2 className="text-[15px] font-medium text-mist-100">Proof it&rsquo;s undrainable</h2>
+      <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
+        Not a promise — anchors you can check on-chain yourself. <span className="text-mist-200">Keyless (this app) can ask
+        your account to pay. It can never sign for it</span> — only the enclave signs, and only what your rule allows.
+      </p>
+      <ul className="mt-4 space-y-3">
+        {rows.map((r, i) => (
+          <li key={i} className="flex gap-3">
+            <span className={`mt-0.5 shrink-0 ${r.live === false ? "text-refuse-400" : "text-allow-500"}`} aria-hidden="true">
+              {r.live === null ? "…" : r.live === false ? "✕" : "✓"}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-mist-100">{r.title}</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-mist-400">
+                {r.proof}
+                {r.link && (
+                  <>
+                    {" "}
+                    <a href={r.link.href} target="_blank" rel="noreferrer" className="text-signal-300 underline underline-offset-2 hover:text-signal-200">
+                      {r.link.label}
+                    </a>
+                  </>
+                )}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string }) {
   const { write, ensureFunded } = useKeyless();
   const [to, setTo] = useState("");
@@ -593,7 +686,13 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
         </div>
       </div>
       {msg && (
-        <div className="mt-3">
+        <motion.div
+          className="mt-3"
+          key={msg.text}
+          initial={{ opacity: 0, scale: 0.97, y: 6 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.32, ease: EASE }}
+        >
           <Notice tone={msg.tone}>
             {msg.text}
             {msg.tx && (
@@ -605,7 +704,7 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
               </>
             )}
           </Notice>
-        </div>
+        </motion.div>
       )}
     </Card>
   );

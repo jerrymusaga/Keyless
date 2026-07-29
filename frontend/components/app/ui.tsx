@@ -44,7 +44,7 @@ export function Button({
   className?: string;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100";
   const styles = {
     primary: "bg-mist-100 text-ink-950 hover:bg-white",
     ghost: "border hairline bg-ink-850/80 text-mist-300 hover:border-ink-600 hover:text-mist-100",
@@ -141,6 +141,11 @@ export function Notice({
     ok: "border-allow-500/40 bg-allow-500/5 text-allow-500",
   }[tone];
   return <div className={`rounded-lg border px-4 py-3 text-[13px] leading-relaxed ${styles}`}>{children}</div>;
+}
+
+/** A shimmering placeholder block for loading states — reads as "content arriving", not "broken". */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-ink-800/70 ${className}`} />;
 }
 
 export function Spinner({ label }: { label?: string }) {
