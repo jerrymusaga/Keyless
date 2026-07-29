@@ -26,8 +26,8 @@ node executor.mjs 7A40F6F3528A7491314129C76C88334A50DD36ED3AA4998689828993ECD3E1
 |---|---|
 | `EXECUTOR_KEY` | 0x key with a little C2FLR (pays the attestation fee + gas; earns the executor fee). Any key — no special role. |
 | `VERIFIER_URL` | FDC verifier base. Default `https://fdc-verifiers-testnet.flare.network`. |
-| **`VERIFIER_API_KEY`** | **Required.** Testnet FDC verifier `X-API-KEY` — obtain from Flare (dev portal / the hackathon). Without it, `prepareRequest` returns 401. |
-| `DA_LAYER_URL` | **Required.** Coston2 DA layer, e.g. `https://ctn2-data-availability.flare.network`. |
+| `VERIFIER_API_KEY` | FDC verifier `X-API-KEY`. Defaults to Flare's **public, rate-limited testnet key** `00000000-0000-0000-0000-000000000000` (documented at dev.flare.network/fdc/getting-started; confirmed 200 vs 401 without it). Override only for a dedicated production verifier. |
+| `DA_LAYER_URL` | Coston2 DA layer. Defaults to `https://ctn2-data-availability.flare.network`. |
 | `RPC_URL` | Coston2 C-chain RPC. Has a default. |
 | `ATTESTATION_TYPE` / `SOURCE_ID` / `VERIFIER_XRP_PATH` | Default `Payment` / `testXRP` / `xrp`. **Confirm** the exact attestation type used for XRP *direct-minting* proofs — the on-chain struct is the XRP-specific `IXRPPayment` (`RequestBody = {transactionId, proofOwner}`, richer `ResponseBody`), which may be served under a dedicated type/endpoint rather than the generic `Payment`. |
 
@@ -45,10 +45,13 @@ Relay, FdcVerification, AssetManagerFXRP `0xc1Ca88b9…`).
 ## Status
 
 The on-chain half (addresses, ABIs incl. `IXRPPayment.Proof`, request→round→proof→execute flow) follows
-Flare's canonical FDC reference. **Two items to obtain/confirm before it runs end-to-end:** the verifier
-**API key**, and the exact **attestation type/endpoint** for XRP direct-minting proofs. Both are external to
-Keyless. Once set, running it against the pending test deposit mints FXRP to the configured Flare address —
-the last hop of the undrainable XRP → FXRP on-ramp.
+Flare's canonical FDC reference. The verifier **API key** is no longer a blocker — Flare's public testnet
+key is now the default and was confirmed live against `verifier/xrp/Payment/prepareRequest` (200 with the
+key, 401 without). Running it against a real deposit tx should mint FXRP to the account's own Flare Smart
+Account — the last hop of the undrainable XRP → FXRP on-ramp. Remaining thing to confirm empirically with a
+**real** XRPL deposit tx: that direct-minting proofs are served under the generic `Payment` type (the
+on-chain call decodes into the XRP-specific `IXRPPayment.Proof`); if FAssets requires a dedicated type, only
+`ATTESTATION_TYPE`/`VERIFIER_XRP_PATH` change.
 
 ## Self-serve vs service
 

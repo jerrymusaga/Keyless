@@ -32,8 +32,11 @@ import { privateKeyToAccount } from "viem/accounts";
 const RPC = process.env.RPC_URL || "https://coston2-api.flare.network/ext/C/rpc";
 const KEY = process.env.EXECUTOR_KEY;
 const VERIFIER_URL = (process.env.VERIFIER_URL || "https://fdc-verifiers-testnet.flare.network").replace(/\/$/, "");
-const VERIFIER_API_KEY = process.env.VERIFIER_API_KEY || "";
-const DA_LAYER_URL = (process.env.DA_LAYER_URL || "").replace(/\/$/, "");
+// Flare's public, rate-limited testnet verifier key — documented at dev.flare.network/fdc/getting-started
+// and empirically confirmed against verifier/xrp/Payment/prepareRequest (200 vs 401 without it). Fine to
+// commit; override with VERIFIER_API_KEY for a dedicated (non-rate-limited) verifier in production.
+const VERIFIER_API_KEY = process.env.VERIFIER_API_KEY || "00000000-0000-0000-0000-000000000000";
+const DA_LAYER_URL = (process.env.DA_LAYER_URL || "https://ctn2-data-availability.flare.network").replace(/\/$/, "");
 const ATT_TYPE = process.env.ATTESTATION_TYPE || "Payment";
 const SOURCE_ID = process.env.SOURCE_ID || "testXRP";
 const XRP_PATH = process.env.VERIFIER_XRP_PATH || "xrp";
