@@ -546,9 +546,11 @@ const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
 const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
 const LOT_FXRP = 10; // FAssets redeems in whole lots; lotSize 1e7 AMG × granularity 1 = 1e7 UBA = 10 FXRP.
 
-// Vault instruction ids are TYPE-based (VaultType 1=Firelight, 2=Upshift). Deposit / withdraw differ per type.
+// Vault deposit instruction id is TYPE-based (VaultType 1=Firelight, 2=Upshift). Withdrawing back out is a
+// two-step redeem→claim whose claim params (period/date) aren't readable on-chain and aren't returned to the
+// frontend (async execution) — verified live: a redeem parks FXRP in a pending state with no auto-claim — so
+// vault withdrawal isn't wired here yet; positions are view-only.
 const depositInstr = (vaultType: number) => (vaultType === 1 ? 0x11 : 0x21);
-const withdrawInstr = (vaultType: number) => (vaultType === 1 ? 0x12 : 0x22); // Upshift 0x22 = requestRedeem
 
 /** One FXRP vault position from the FSA ReaderFacet. */
 type VaultBalance = { vaultId: bigint; vaultAddress: string; vaultType: number; shares: bigint; assets: bigint };
@@ -589,7 +591,6 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
   const [depositAmt, setDepositAmt] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
-  const [withdrawAmts, setWithdrawAmts] = useState<Record<string, string>>({});
   const [home, setHome] = useState("");
 
   // Whole FXRP portfolio, from one ReaderFacet.getBalances call.
@@ -733,12 +734,6 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     if (!v) return setMsg({ tone: "error", text: "Pick a vault to deposit into." });
     act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)));
   };
-  const runWithdraw = (v: VaultBalance) => {
-    const amt = uba(withdrawAmts[v.vaultId.toString()] ?? "");
-    if (!(amt > 0n)) return setMsg({ tone: "error", text: "Enter an amount of FXRP to withdraw." });
-    if (amt > v.assets) return setMsg({ tone: "error", text: `This vault holds ${fmtFxrp(v.assets)} FXRP — withdraw that or less.` });
-    act(`Withdraw-${v.vaultId}`, fsaRef(withdrawInstr(v.vaultType), amt, Number(v.vaultId)));
-  };
   const runRedeem = () => {
     const lots = Math.floor(Number(home) / LOT_FXRP);
     if (!(lots >= 1)) return setMsg({ tone: "error", text: `Bringing home works in lots of ${LOT_FXRP} FXRP — enter at least ${LOT_FXRP}.` });
@@ -803,7 +798,8 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">② 🌱 Put FXRP to work</p>
             <p className="mt-0.5 text-[12px] text-mist-500">
-              Deposit liquid FXRP into a Flare yield vault. You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.
+              Deposit liquid FXRP into a Flare yield vault to earn. You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.{" "}
+              <span className="text-mist-400">Note: pulling it back out is a two-step claim we&rsquo;re still finishing.</span>
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <select
@@ -824,30 +820,25 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             </div>
           </div>
 
-          {/* Positions */}
+          {/* Positions (view-only for now — see the note) */}
           {positions.length > 0 && (
             <div className="rounded-xl border hairline bg-ink-900/60 p-4">
               <p className="text-[14px] font-medium text-mist-100">Your positions</p>
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 space-y-2">
                 {positions.map((v) => {
                   const key = v.vaultId.toString();
                   return (
-                    <div key={key} className="flex flex-wrap items-center justify-between gap-2 border-t hairline pt-3 first:border-t-0 first:pt-0">
-                      <div className="min-w-0">
-                        <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} <span className="text-mist-500">· #{key}</span></p>
-                        <p className="text-[12px] text-mist-500">
-                          <span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> earning{v.vaultType === 2 ? " · redeem is a request + claim" : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <NumberInput value={withdrawAmts[key] ?? ""} onValueChange={(x) => setWithdrawAmts((m) => ({ ...m, [key]: x }))} decimal placeholder="0" className="w-24 text-right" />
-                        <span className="text-[12px] text-mist-500">FXRP</span>
-                        <Button variant="ghost" onClick={() => runWithdraw(v)} disabled={!!busy}>{busy === `Withdraw-${key}` ? "…" : "Withdraw"}</Button>
-                      </div>
+                    <div key={key} className="flex items-center justify-between gap-2 border-t hairline pt-2 first:border-t-0 first:pt-0">
+                      <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} <span className="text-mist-500">· #{key}</span></p>
+                      <p className="text-[12px]"><span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> <span className="text-mist-500">earning</span></p>
                     </div>
                   );
                 })}
               </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
+                Pulling FXRP back out of a vault is a two-step claim (redeem → claim after the vault&rsquo;s unlock).
+                We&rsquo;re finishing that flow, so withdrawals aren&rsquo;t in the UI yet — your <span className="text-mist-400">liquid</span> FXRP can be brought home any time below.
+              </p>
             </div>
           )}
 
