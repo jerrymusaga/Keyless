@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useState, type ReactNode } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { motion, AnimatePresence } from "motion/react";
 import { useKeyless } from "@/components/app/KeylessProvider";
-import { RuleConfig } from "@/components/app/RuleConfig";
+import { RuleConfig, formatLimit, type Limit } from "@/components/app/RuleConfig";
 import { Button, Card, Copy, Field, Input, Notice, Skeleton } from "@/components/app/ui";
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
@@ -165,8 +165,12 @@ function AccountSkeleton() {
  * generated from its live on-chain config. Turns "policy" into "here's what your money is allowed to do."
  * Exchange is fully translated from config; other rules show their gist until per-policy detail is added.
  */
+type Recip = { address: string; requireTag: boolean; tag: number };
+type Escrow = { recipient: string; maxAmount: string; conditionHash: string; released: boolean };
+type RuleCfg = { recipients?: Recip[]; capDrops?: string; limit?: Limit; escrow?: Escrow | null };
+
 function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
-  const [cfg, setCfg] = useState<{ recipients?: { address: string; requireTag: boolean; tag: number }[]; capDrops?: string } | null>(null);
+  const [cfg, setCfg] = useState<RuleCfg | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -187,6 +191,7 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
 
   const can: ReactNode[] = [];
   const cant: ReactNode[] = [];
+  let notSetUp = false;
 
   if (ruleKey === "exchange") {
     for (const r of cfg?.recipients ?? []) {
@@ -194,17 +199,37 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
     }
     if (cfg?.capDrops && cfg.capDrops !== "0") can.push(<>Send at most <span className="text-mist-200">{formatDrops(BigInt(cfg.capDrops))}</span> in one payment</>);
     cant.push("Send to anyone else");
+    notSetUp = !loading && (cfg?.recipients?.length ?? 0) === 0;
+  } else if (ruleKey === "rateLimit") {
+    const l = cfg?.limit;
+    if (l) {
+      can.push(<>Spend up to <span className="text-mist-200">{formatLimit(l)}</span></>);
+      if (l.maxPerTx && l.maxPerTx !== "0") can.push(<>Send at most <span className="text-mist-200">{formatDrops(BigInt(l.maxPerTx))}</span> in one payment</>);
+      if (l.allowlistOnly) {
+        for (const r of cfg?.recipients ?? []) can.push(<>Pay <span className="font-mono text-mist-200">{addr(r.address)}</span></>);
+        cant.push("Pay anyone not on the list");
+      } else {
+        can.push("Pay any address (within the limit)");
+      }
+      cant.push("Spend more than the limit");
+    } else {
+      notSetUp = !loading;
+    }
+  } else if (ruleKey === "escrow") {
+    const e = cfg?.escrow;
+    if (e) {
+      can.push(<>Pay <span className="font-mono text-mist-200">{addr(e.recipient)}</span> up to <span className="text-mist-200">{formatDrops(BigInt(e.maxAmount))}</span>{e.released ? <> — <span className="text-allow-500">condition proven ✓</span></> : " — once the condition is proven"}</>);
+      if (!e.released) cant.push("Pay before the condition is proven");
+      cant.push("Pay anyone else");
+    } else {
+      notSetUp = !loading;
+    }
   } else if (ruleKey === "fxrp") {
     can.push("Mint FXRP into this account's own Flare account");
     can.push("Earn in Flare vaults, and bring it home to XRP");
     cant.push("Send FXRP to anyone else");
-  } else {
-    can.push(RULE_META[ruleKey].tagline);
-    cant.push("Send anywhere the rules don't allow");
   }
   cant.push(<>Be drained — <span className="text-mist-300">even if your key is stolen</span></>);
-
-  const notSetUp = ruleKey === "exchange" && !loading && (cfg?.recipients?.length ?? 0) === 0;
 
   return (
     <Card className="border-signal-500/25 bg-gradient-to-b from-signal-500/[0.04] to-transparent">
@@ -217,7 +242,7 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
             <p className="text-[11px] font-medium uppercase tracking-wide text-allow-500">Can</p>
             <ul className="mt-2 space-y-1.5">
               {notSetUp ? (
-                <li className="text-[13px] text-mist-500">Not set up yet — choose who it can pay below.</li>
+                <li className="text-[13px] text-mist-500">Not set up yet — set it up below.</li>
               ) : (
                 can.map((c, i) => (
                   <li key={i} className="flex gap-2 text-[13px] text-mist-300"><span className="mt-px text-allow-500">✓</span><span>{c}</span></li>

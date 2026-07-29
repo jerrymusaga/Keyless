@@ -266,7 +266,7 @@ function periodLabel(secondsStr: string) {
   return `every ${s}s`;
 }
 
-type Limit = { mode: number; cap: string; param: string; maxPerTx: string; allowlistOnly: boolean };
+export type Limit = { mode: number; cap: string; param: string; maxPerTx: string; allowlistOnly: boolean };
 type RuleConfigResponse = {
   recipients?: SavedRecipient[];
   capDrops?: string;
@@ -275,7 +275,7 @@ type RuleConfigResponse = {
 
 const CAL_LABEL = ["day", "week", "month"]; // calendar unit index -> label
 /** Human summary of a spending limit, per its duration mode. */
-function formatLimit(l: Limit): string {
+export function formatLimit(l: Limit): string {
   const cap = formatDrops(BigInt(l.cap));
   if (l.mode === 1) return `${cap} per calendar ${CAL_LABEL[Number(l.param)] ?? "period"}`;
   if (l.mode === 2) return `${cap} total until ${new Date(Number(l.param) * 1000).toLocaleDateString(undefined, { timeZone: "UTC" })} (UTC)`;
@@ -318,6 +318,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
     try {
       await write({ address: RULES[ruleKey] as `0x${string}`, abi: RULE_ABIS[ruleKey] as never, functionName: "remove", args: [walletId, address] });
       setData((d) => (d ? { ...d, recipients: (d.recipients ?? []).filter((r) => r.address !== address) } : d)); // optimistic
+      signalConfigChanged();
       setTimeout(load, 4500);
     } catch (e) {
       setErr(e instanceof Error ? e.message.split("\n")[0] : String(e));
@@ -330,7 +331,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
   if (recipients.length === 0 && !data?.limit) return null;
 
   return (
-    <Field label="Currently approved" hint="Live on-chain — the only addresses this account can pay. Remove any to revoke it.">
+    <Field label="Already allowed" hint="Remove any to stop this account from paying it.">
       <div className="space-y-2">
         {recipients.map((r) => (
           <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -380,8 +381,8 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "allow", [walletId, addr.trim()], "Recipient allowlisted.");
-    if (ok) { setAddr(""); setRefreshKey((k) => k + 1); }
+    const ok = await run(RULES.rateLimit as `0x${string}`, RULE_ABIS.rateLimit, "allow", [walletId, addr.trim()], "Added to the list.");
+    if (ok) { setAddr(""); setRefreshKey((k) => k + 1); signalConfigChanged(); }
   };
   const setLimit = async () => {
     let drops: bigint;
@@ -423,7 +424,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       [walletId, modeNum, drops, param, perTxDrops, allowlistOnly],
       `Limit set: ${summary}${perTxNote}, ${whoNote}.`,
     );
-    if (ok) setRefreshKey((k) => k + 1);
+    if (ok) { setRefreshKey((k) => k + 1); signalConfigChanged(); }
   };
 
   const selectCls = "rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none focus:border-signal-500/60";
@@ -467,22 +468,22 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       </Field>
 
       {allowlistOnly && (
-        <Field label="Approved recipients" hint="It can only pay these — even within the allowance.">
+        <Field label="Who's on the list?" hint="It can only pay these — even within the allowance.">
           <div className="flex gap-2">
             <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
-            <Button variant="ghost" onClick={allow} disabled={busy}>Allow</Button>
+            <Button variant="ghost" onClick={allow} disabled={busy}>Add</Button>
           </div>
         </Field>
       )}
 
-      <Field label="Amount" hint="The cap — per window for a rolling/calendar limit, or the total for an ‘until a date’ budget.">
+      <Field label="How much can it spend?" hint="Per window for a rolling/calendar limit, or the total for an ‘until a date’ budget.">
         <div className="flex items-center gap-2">
           <NumberInput value={cap} onValueChange={setCap} decimal placeholder="10" className="w-28" />
           <span className="text-[13px] text-mist-500">XRP</span>
         </div>
       </Field>
 
-      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget. Times are UTC.">
+      <Field label="Over what period?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget. Times are UTC.">
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {([["rolling", "Rolling window"], ["calendar", "Calendar period"], ["until", "Until a date"]] as const).map(([val, label]) => (
@@ -545,7 +546,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       )}
 
-      <Button onClick={setLimit} disabled={busy}>{busy ? "Saving…" : "Set limit"}</Button>
+      <Button onClick={setLimit} disabled={busy}>{busy ? "Saving…" : "Save limit"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
@@ -900,8 +901,8 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
       return alert(e instanceof Error ? e.message : String(e));
     }
     const conditionHash = keccak256(toBytes(condition.trim()));
-    const ok = await run(RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure", [walletId, recipient.trim(), drops, conditionHash], "Escrow set. Funds unlock only once the condition is FDC-attested.");
-    if (ok) { setRecipient(""); setCap(""); setCondition(""); setRefreshKey((k) => k + 1); }
+    const ok = await run(RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure", [walletId, recipient.trim(), drops, conditionHash], "Set. Funds unlock only once the condition is proven on-chain.");
+    if (ok) { setRecipient(""); setCap(""); setCondition(""); setRefreshKey((k) => k + 1); signalConfigChanged(); }
   };
   return (
     <div className="space-y-4">
@@ -915,12 +916,12 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
       <Notice tone="info">
         Funds stay locked until Flare&rsquo;s Data Connector proves the condition. (Submitting the proof is an advanced step, done outside this form.)
       </Notice>
-      <Field label="Payee"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
-      <Field label="Cap"><NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" /></Field>
-      <Field label="Release condition" hint="Hashed on-chain. Unlocks when Flare's Data Connector attests it.">
+      <Field label="Pay who?"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
+      <Field label="Up to how much?"><NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" /></Field>
+      <Field label="Only pay once this is true" hint="Hashed on-chain. Unlocks when Flare's Data Connector proves it.">
         <Input value={condition} onChange={(e) => setCondition(e.target.value)} placeholder="delivery == true" />
       </Field>
-      <Button onClick={configure} disabled={busy}>{busy ? "…" : "Set escrow"}</Button>
+      <Button onClick={configure} disabled={busy}>{busy ? "…" : "Save"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
