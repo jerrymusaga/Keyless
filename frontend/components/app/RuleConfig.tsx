@@ -608,6 +608,15 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   }, [walletId, readBalance]);
   useEffect(() => { load(); }, [load]);
 
+  // The enclave provisions the XRPL address a few seconds after creation; until then personalAccountOf
+  // reverts and `pa` is null (Mint disabled). Keep retrying until the Flare account resolves, so the button
+  // enables on its own without the user needing to refresh the page.
+  useEffect(() => {
+    if (pa) return;
+    const t = setInterval(() => { load(); }, 5000);
+    return () => clearInterval(t);
+  }, [pa, load]);
+
   // Actions complete a few seconds later via an executor. Poll the FXRP balance for a short window so the
   // number the user sees reflects the mint/deposit/withdraw once it lands, without a manual refresh.
   const settle = useCallback(() => {
