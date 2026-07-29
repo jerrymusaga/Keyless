@@ -34,8 +34,7 @@ const UNITS: { label: string; seconds: number }[] = [
 export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
-  if (ruleKey === "fxrpMint") return <FxrpMintConfig walletId={walletId} />;
-  if (ruleKey === "fxrpDefi") return <FxrpDefiConfig walletId={walletId} />;
+  if (ruleKey === "fxrp") return <FxrpConfig walletId={walletId} />;
   return <EscrowConfig walletId={walletId} />;
 }
 
@@ -541,158 +540,73 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   );
 }
 
-function FxrpMintConfig({ walletId }: { walletId: `0x${string}` }) {
-  const { address, write } = useKeyless();
-  const [useControlKey, setUseControlKey] = useState(true);
-  const [custom, setCustom] = useState("");
-  const [current, setCurrent] = useState<string | null>(null);
+// FSA XRPL provider wallet (Coston2) — every instruction is a payment here, carrying the reference.
+const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
+const FIRELIGHT_VAULT = 1; // default Flare yield vault id (type 1 -> deposit 0x11 / redeem 0x12)
+const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
+
+/** Build the 32-byte FSA reference, mirroring FxrpRule / PaymentReferenceParser. */
+const fsaRef = (id: number, value: bigint, vaultId: number): `0x${string}` =>
+  toHex((BigInt(id) << 248n) | (value << 160n) | (BigInt(vaultId) << 128n), { size: 32 });
+
+/**
+ * The unified FXRP panel: the whole XRP↔Flare round-trip in one policy. First mint XRP into FXRP — which
+ * lands ONLY in this account's own Flare Smart Account (the rule computes that address on-chain, so nothing
+ * to configure and nothing to hijack). Then put that FXRP to work in Flare vaults, withdraw, and bring it
+ * home to XRPL. Each verb signs one XRPL payment; Flare's executor completes it. Sending FXRP to any other
+ * address is blocked on-chain — even a stolen key can only move value inside your own account or bring it home.
+ */
+function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
+  const { write } = useKeyless();
+  const [pa, setPa] = useState<string | null>(null);
   const [coreVault, setCoreVault] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [notReady, setNotReady] = useState(false);
   const [mintAmt, setMintAmt] = useState("");
-  const [minting, setMinting] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  const [deposit, setDeposit] = useState("");
+  const [withdraw, setWithdraw] = useState("");
+  const [home, setHome] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [r, cv] = await Promise.all([
-        publicClient.readContract({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "recipientOf", args: [walletId] }) as Promise<string>,
-        publicClient.readContract({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "coreVaultAddress" }) as Promise<string>,
-      ]);
-      setCurrent(r && r !== ZERO_ADDRESS ? r : null);
+      const cv = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "coreVaultAddress" }) as string;
       setCoreVault(cv);
     } catch { /* transient */ }
+    try {
+      const p = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "personalAccountOf", args: [walletId] }) as string;
+      setPa(p && p !== ZERO_ADDRESS ? p : null);
+      setNotReady(false);
+    } catch {
+      // personalAccountOf reverts until the enclave has reported this account's XRPL deposit address.
+      setNotReady(true);
+    }
   }, [walletId]);
   useEffect(() => { load(); }, [load]);
 
-  const recipient = (useControlKey ? address ?? "" : custom.trim());
-  const save = async () => {
-    setMsg(null);
-    if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) return setMsg({ tone: "error", text: "Enter a valid Flare (0x…) address." });
-    setBusy(true);
-    try {
-      await write({ address: RULES.fxrpMint as `0x${string}`, abi: RULE_ABIS.fxrpMint as never, functionName: "configure", args: [walletId, recipient as `0x${string}`] });
-      setCurrent(recipient);
-      setMsg({ tone: "ok", text: `Set. This account can only mint FXRP to ${addr(recipient)} — nowhere else.` });
-    } catch (e) {
-      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Mint = pay the Core Vault the pinned mint memo for the CONFIGURED recipient (the rule rejects anything else).
+  // Mint = pay the Core Vault a memo crediting THIS account's own FSA personal account (the rule recomputes
+  // it and rejects any other target). We build the exact same memo the rule expects.
   const mint = async () => {
     setMsg(null);
-    if (!current) return;
+    if (!pa) return;
     let drops: bigint;
     try {
       drops = xrpToDrops(mintAmt);
     } catch (e) {
       return setMsg({ tone: "error", text: e instanceof Error ? e.message : String(e) });
     }
-    setMinting(true);
+    setBusy("Mint");
     try {
-      const memo = fxrpMintMemo(current as `0x${string}`);
+      const memo = fxrpMintMemo(pa as `0x${string}`);
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
       setMintAmt("");
-      setMsg({ tone: "ok", text: `Sent ${mintAmt} XRP to the Core Vault to mint FXRP to ${addr(current)}. An executor completes the mint shortly.` });
+      setMsg({ tone: "ok", text: `Sent ${mintAmt} XRP to the Core Vault — FXRP will land in your own Flare account. An executor completes the mint shortly.` });
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
     } finally {
-      setMinting(false);
+      setBusy(null);
     }
   };
-
-  return (
-    <div className="space-y-4">
-      <Notice tone="info">
-        Minting FXRP means sending XRP to Flare&rsquo;s FAssets Core Vault, and receiving FXRP on Flare. This account
-        can <span className="text-mist-100">only</span> do that — crediting the Flare address below, never anywhere else.
-        After the XRP lands, an executor completes the mint.
-      </Notice>
-
-      {current && (
-        <Field label="Currently mints to">
-          <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{current}</code>
-            <Copy text={current} />
-          </div>
-        </Field>
-      )}
-
-      <Field label="Mint FXRP to" hint="A Flare (EVM) address. Your Keyless control key is one — minting there keeps the FXRP in the wallet you already manage, ready for Flare DeFi.">
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            {([[true, "My control key"], [false, "Another Flare address"]] as const).map(([val, label]) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setUseControlKey(val)}
-                className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
-                  useControlKey === val ? "border-signal-500/60 bg-signal-500/5 text-mist-100" : "hairline bg-ink-900/60 text-mist-400 hover:text-mist-200"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {useControlKey ? (
-            <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-              <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{address ?? "…"}</code>
-              {address && <Copy text={address} />}
-            </div>
-          ) : (
-            <Input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="0x… Flare address" />
-          )}
-        </div>
-      </Field>
-
-      <Field label="Deposit address (FAssets Core Vault)" hint="The only XRPL address this account can pay.">
-        <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-          <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-300">{coreVault || "…"}</code>
-          {coreVault && <Copy text={coreVault} />}
-        </div>
-      </Field>
-
-      <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Set mint recipient"}</Button>
-
-      {current && (
-        <div className="border-t hairline pt-4">
-          <Field label="Mint FXRP" hint="Sends XRP from this account's balance to the Core Vault. You receive FXRP at the address above once an executor relays the proof — it can go nowhere else.">
-            <div className="flex flex-wrap items-center gap-2">
-              <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
-              <span className="text-[13px] text-mist-500">XRP</span>
-              <Button onClick={mint} disabled={minting}>{minting ? "Minting…" : "Mint FXRP"}</Button>
-            </div>
-          </Field>
-        </div>
-      )}
-      {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-    </div>
-  );
-}
-
-// FSA XRPL provider wallet (Coston2) — every instruction is a payment here, carrying the reference.
-const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
-const FIRELIGHT_VAULT = 1; // default Flare yield vault id (type 1 -> deposit 0x11 / redeem 0x12)
-const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
-
-/** Build the 32-byte FSA reference, mirroring FxrpDefiRule / PaymentReferenceParser. */
-const fsaRef = (id: number, value: bigint, vaultId: number): `0x${string}` =>
-  toHex((BigInt(id) << 248n) | (value << 160n) | (BigInt(vaultId) << 128n), { size: 32 });
-
-/**
- * The three-verb FXRP-in-DeFi panel. Each verb signs one XRPL payment to the FSA wallet carrying a gated
- * instruction; Flare's executor completes it on-chain. The rule blocks the one unsafe move (transfer out),
- * so nothing here can send FXRP to a thief. (Needs FXRP already in the account — minting is wired next.)
- */
-function FxrpDefiConfig({ walletId }: { walletId: `0x${string}` }) {
-  const { write } = useKeyless();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
-  const [deposit, setDeposit] = useState("");
-  const [withdraw, setWithdraw] = useState("");
-  const [home, setHome] = useState("");
 
   const act = async (label: string, amount: string, ref: `0x${string}`) => {
     const n = Number(amount);
@@ -734,17 +648,48 @@ function FxrpDefiConfig({ walletId }: { walletId: `0x${string}` }) {
   );
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <Notice tone="info">
-        Put your FXRP to work in Flare vaults and bring it home to XRPL — sending FXRP anywhere else is blocked
-        on-chain. (Needs FXRP already in this account; minting is wired next.)
+        The full round-trip, locked to your own account. Mint XRP into FXRP — it can only ever land in your own
+        Flare Smart Account. Then put it to work in Flare vaults and bring it home to XRPL. Sending FXRP to anyone
+        else is blocked on-chain.
       </Notice>
-      {row("🌱 Put FXRP to work", "Deposit into a Flare yield vault.", "FXRP", deposit, setDeposit,
+
+      {notReady ? (
+        <Notice tone="info">
+          Your Flare account address appears once the enclave has provisioned this wallet&rsquo;s XRPL deposit
+          address (just after creation). Refresh in a moment.
+        </Notice>
+      ) : (
+        <Field label="Your FXRP lands here (Flare Smart Account)" hint="Computed on-chain from this wallet's own XRPL address — not configurable, so a stolen key can't repoint the mint.">
+          <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{pa ?? "…"}</code>
+            {pa && <Copy text={pa} />}
+          </div>
+        </Field>
+      )}
+
+      {/* 1 · Mint */}
+      <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+        <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
+        <p className="mt-0.5 text-[12px] text-mist-500">
+          Sends XRP from this account to the FAssets Core Vault{coreVault ? <> (<code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}; you receive FXRP in your own Flare account once an executor relays the proof.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
+          <span className="text-[13px] text-mist-500">XRP</span>
+          <Button onClick={mint} disabled={!pa || !!busy}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
+        </div>
+      </div>
+
+      {/* 2 · Put to work / withdraw / bring home */}
+      {row("② 🌱 Put FXRP to work", "Deposit into a Flare yield vault.", "FXRP", deposit, setDeposit,
         () => act("Deposit", deposit, fsaRef(0x11, drops(deposit), FIRELIGHT_VAULT)))}
       {row("↩︎ Withdraw", "Pull FXRP back out of the vault.", "FXRP", withdraw, setWithdraw,
         () => act("Withdraw", withdraw, fsaRef(0x12, drops(withdraw), FIRELIGHT_VAULT)))}
-      {row("🏠 Bring home to XRPL", "Redeem FXRP back to XRP on your account.", "lots", home, setHome,
+      {row("③ 🏠 Bring home to XRPL", "Redeem FXRP back to XRP on your account.", "lots", home, setHome,
         () => act("Redeem", home, fsaRef(0x02, BigInt(Math.max(1, Math.floor(Number(home)))), 0)))}
+
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );

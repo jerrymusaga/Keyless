@@ -289,15 +289,10 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
     let stop = false;
     (async () => {
       try {
-        // FXRP mint stores a single recipient (public getter) — read it directly, no event replay needed.
-        if (ruleKey === "fxrpMint") {
-          const r = (await publicClient.readContract({
-            address: RULES.fxrpMint as `0x${string}`,
-            abi: RULE_ABIS.fxrpMint as never,
-            functionName: "recipientOf",
-            args: [walletId],
-          })) as string;
-          if (!stop) setConfigured(r !== ZERO_ADDRESS);
+        // The FXRP rule needs no configuration — it mints only to this account's own (on-chain-computed)
+        // Flare account and permits just the safe DeFi verbs. Nothing to allowlist, so it's ready at once.
+        if (ruleKey === "fxrp") {
+          if (!stop) setConfigured(true);
           return;
         }
         const res = await fetch("/api/rule-config", {

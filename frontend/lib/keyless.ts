@@ -49,8 +49,10 @@ export const RULES = {
   exchange: "0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4",
   rateLimit: "0x51Cc5c71350d527fDaA188B39f28DE22F4873710", // v3: rolling | calendar-aligned | until-a-date, + optional allowlist + per-tx cap
   escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
-  fxrpMint: "0xaa0405f9DCFa83517469D133143351a07586a23f", // safe FXRP mint: XRP -> FXRP to your Flare address only
-  fxrpDefi: "0xB5Ab70B41805f24C995f3ade22a7a533721cB926", // undrainable FXRP in Flare Smart Accounts: vault ops + redeem-home, transfer-out blocked
+  // Unified FXRP round-trip: mint XRP->FXRP to your OWN Flare Smart Account (computed on-chain, not
+  // configurable), then vault ops + redeem-home; transferring FXRP out is blocked. Supersedes the two
+  // separate fxrpMint (0xaa0405f9…) + fxrpDefi (0xB5Ab70B4…) rules — see LEGACY_RULE_NAMES.
+  fxrp: "0x12AdbaAbE8409fF2f7B8f12e680a6E5698a7D2eE",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -292,13 +294,12 @@ export const RULE_ABIS = {
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" }], outputs: [] },
     { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
   ],
-  fxrpMint: [
-    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "flareRecipient", type: "address" }], outputs: [] },
-    { type: "function", name: "recipientOf", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] },
+  // Unified FXRP: mint half (mint into your own on-chain-computed FSA personal account) + DeFi half
+  // (vault ops + redeem-home). `personalAccountOf` is the only mint target — nothing to configure.
+  fxrp: [
+    { type: "function", name: "personalAccountOf", stateMutability: "view", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [{ type: "address" }] },
+    { type: "function", name: "mintMemo", stateMutability: "pure", inputs: [{ name: "flareRecipient", type: "address" }], outputs: [{ type: "bytes32" }] },
     { type: "function", name: "coreVaultAddress", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-    { type: "function", name: "mintMemo", stateMutability: "view", inputs: [{ name: "flareRecipient", type: "address" }], outputs: [{ type: "bytes32" }] },
-  ],
-  fxrpDefi: [
     { type: "function", name: "fsaProviderWallet", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
     { type: "function", name: "redeemHomeRef", stateMutability: "pure", inputs: [{ name: "lots", type: "uint80" }], outputs: [{ type: "bytes32" }] },
     { type: "function", name: "vaultRef", stateMutability: "pure", inputs: [{ name: "id", type: "uint8" }, { name: "vaultId", type: "uint16" }, { name: "value", type: "uint80" }], outputs: [{ type: "bytes32" }] },
@@ -331,20 +332,12 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
     address: RULES.escrow,
     comingSoon: true,
   },
-  fxrpMint: {
-    name: "FXRP mint",
-    tagline: "Convert XRP to FXRP on Flare — the account can only ever mint to your Flare address, nowhere else.",
-    useFor: "An undrainable on-ramp: turn XRP into FXRP to use in Flare DeFi, where it can only ever land in your own wallet.",
-    protects: "A stolen key can't move your XRP out — it can only turn it into FXRP in your own Flare wallet.",
-    address: RULES.fxrpMint,
-    comingSoon: true,
-  },
-  fxrpDefi: {
-    name: "FXRP in DeFi",
-    tagline: "Put your FXRP to work in Flare vaults and bring it home to XRPL — it can never be sent anywhere else.",
-    useFor: "Earn yield on your XRP through Flare DeFi · move value to Flare and back safely · an undrainable DeFi account.",
-    protects: "Even a stolen key can only stake your FXRP or redeem it home — never transfer it out to a thief.",
-    address: RULES.fxrpDefi,
+  fxrp: {
+    name: "FXRP on Flare",
+    tagline: "Turn XRP into FXRP, earn yield in Flare vaults, and bring it home — all locked to your own account. FXRP can never be sent to anyone else.",
+    useFor: "An undrainable XRP↔Flare round-trip: mint FXRP into your own Flare account, put it to work in DeFi, and redeem back to XRP — safely.",
+    protects: "Every step lands in your own account. A stolen key can only mint, stake, or bring funds home — never transfer FXRP out to a thief.",
+    address: RULES.fxrp,
     comingSoon: true,
   },
 };
@@ -356,6 +349,8 @@ export const LEGACY_RULE_NAMES: Record<string, string> = {
   "0xd4dbdfb1de4f2ccd26bddb795dccf7a9c194df6f": "Spending limit", // RateLimitRule v2
   "0x7ae1dc15acd4766132ac11a67dfdcde03bd8dec2": "Allowlist", // retired AllowlistRule (folded into Exchange)
   "0xa828482fab7c149aa6d339b31016cf0d7165aedc": "Subscription", // retired SubscriptionRule (folded into Spending limit)
+  "0xaa0405f9dcfa83517469d133143351a07586a23f": "FXRP on Flare", // retired FxrpMintRule (folded into unified FXRP)
+  "0xb5ab70b41805f24c995f3ade22a7a533721cb926": "FXRP on Flare", // retired FxrpDefiRule (folded into unified FXRP)
 };
 
 export const TEE_MANAGER_ABI = [

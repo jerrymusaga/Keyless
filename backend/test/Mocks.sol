@@ -107,3 +107,10 @@ contract MockFdcVerification {
         return result;
     }
 }
+
+/// @notice Mock Flare Smart Accounts diamond — deterministic personal-account address per XRPL owner.
+contract MockFsa {
+    function getPersonalAccount(string calldata xrplOwner) external pure returns (address) {
+        return address(uint160(uint256(keccak256(bytes(xrplOwner)))));
+    }
+}

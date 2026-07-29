@@ -10,11 +10,12 @@ import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
 import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
 import {FxrpMintRule} from "../src/rules/FxrpMintRule.sol";
 import {FxrpDefiRule} from "../src/rules/FxrpDefiRule.sol";
+import {FxrpRule} from "../src/rules/FxrpRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
 import {IWeb2Json} from "../src/interfaces/IFdc.sol";
-import {MockTeeRegistry, MockFdcVerification} from "./Mocks.sol";
+import {MockTeeRegistry, MockFdcVerification, MockFsa} from "./Mocks.sol";
 
 contract KeylessAccountsTest is Test {
     MockTeeRegistry tee;
@@ -495,6 +496,63 @@ contract KeylessAccountsTest is Test {
         bytes32 redeemRef = rule.redeemHomeRef(5); // precompute (else expectRevert binds to this staticcall)
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "trigger amount too large"));
         accounts.pay{value: FEE}(id, FSA_WALLET, FSA_MAX_TRIGGER + 1, redeemRef);
+    }
+
+    // --- unified FXRP rule (mint to own FSA account + undrainable DeFi) ------
+
+    string constant KL_XRPL = "rKeyLessDepositXXXXXXXXXXXXXXXXXXXX";
+
+    function _fxrp(bytes32 id) internal returns (FxrpRule rule, MockFsa fsa) {
+        fsa = new MockFsa();
+        rule = new FxrpRule(address(accounts), CORE_VAULT, FSA_WALLET, address(fsa), FSA_MAX_TRIGGER);
+        vm.prank(alice);
+        accounts.setRule(id, address(rule));
+    }
+
+    function test_fxrp_mintsOnlyToOwnPersonalAccount() public {
+        bytes32 id = _wallet(alice, "fxrp");
+        (FxrpRule rule, MockFsa fsa) = _fxrp(id);
+        // provision the account's XRPL deposit address, as the enclave reporter would
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, KL_XRPL);
+        address pa = fsa.getPersonalAccount(KL_XRPL);
+
+        // minting that credits the account's OWN FSA personal account is allowed
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, rule.mintMemo(pa));
+        assertEq(tee.lastRecipient(), CORE_VAULT);
+
+        // minting to any other Flare address is refused — mints can't be repointed to a thief
+        bytes32 badMemo = rule.mintMemo(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "must mint to your FSA account"));
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, badMemo);
+    }
+
+    function test_fxrp_mintRevertsBeforeXrplProvisioned() public {
+        bytes32 id = _wallet(alice, "fxrp");
+        (FxrpRule rule,) = _fxrp(id);
+        bytes32 memo = rule.mintMemo(address(0x1234));
+        vm.expectRevert(bytes("xrpl address not provisioned yet"));
+        accounts.pay{value: FEE}(id, CORE_VAULT, 20_000_000, memo);
+    }
+
+    function test_fxrp_defiSafeSetAndBlocksTransferOut() public {
+        bytes32 id = _wallet(alice, "fxrp");
+        (FxrpRule rule,) = _fxrp(id);
+        // vault deposit + redeem-home are allowed
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, rule.redeemHomeRef(5));
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, rule.vaultRef(0x11, 1, 5_000_000));
+        // transferring FXRP out is blocked
+        bytes32 xfer = bytes32((uint256(0x01) << 248) | (uint256(9) << 160) | uint256(uint160(address(0xBAD))));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "FXRP transfer-out is not allowed"));
+        accounts.pay{value: FEE}(id, FSA_WALLET, 1000, xfer);
+    }
+
+    function test_fxrp_blocksUnknownRecipient() public {
+        bytes32 id = _wallet(alice, "fxrp");
+        (FxrpRule rule,) = _fxrp(id);
+        bytes32 redeemRef = rule.redeemHomeRef(5);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1000, redeemRef);
     }
 
     // --- subscription rule ---------------------------------------------------

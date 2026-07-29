@@ -27,7 +27,7 @@ export function TrustBar() {
   );
 }
 
-const ORDER: RuleKey[] = ["exchange", "rateLimit", "fxrpMint", "fxrpDefi", "escrow"];
+const ORDER: RuleKey[] = ["exchange", "rateLimit", "fxrp", "escrow"];
 
 export function Features() {
   return (
@@ -165,7 +165,7 @@ export function FinalCTA() {
 }
 
 function RuleIcon({ k }: { k: RuleKey }) {
-  const map: Record<RuleKey, string> = { exchange: "🏦", rateLimit: "🤖", escrow: "📦", fxrpMint: "🪙", fxrpDefi: "🌱" };
+  const map: Record<RuleKey, string> = { exchange: "🏦", rateLimit: "🤖", escrow: "📦", fxrp: "🪙" };
   return (
     <span className="flex size-9 items-center justify-center rounded-lg border hairline bg-ink-850 text-base" aria-hidden="true">
       {map[k]}

@@ -30,4 +30,5 @@ interface IKeylessRule {
 interface IKeylessAccounts {
     function ownerOf(bytes32 walletId) external view returns (address);
     function isLocked(bytes32 walletId) external view returns (bool);
+    function xrplAddressOf(bytes32 walletId) external view returns (string memory);
 }
