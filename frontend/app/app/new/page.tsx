@@ -90,19 +90,19 @@ export default function NewAccount() {
       <a href="/app" className="text-xs text-mist-500 hover:text-mist-300">← Your accounts</a>
       <h1 className="mt-3 text-2xl font-medium tracking-[-0.02em] text-mist-100">New account</h1>
       <p className="mt-1 text-sm text-mist-400">
-        Name it, pick the policy its key will obey, and Keyless generates the XRP account inside the enclave.
+        Name it, pick a policy, and Keyless makes the XRP account inside the enclave.
       </p>
 
       <div className="mt-8 space-y-6">
         <Card>
-          <Field label="Account name" hint="Required — how you'll tell your accounts apart. e.g. “Exchange savings”, “Trading bot”, “Kid's allowance”.">
+          <Field label="Account name" hint="How you'll tell your accounts apart — e.g. “Exchange savings”, “Trading bot”.">
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Exchange savings" />
           </Field>
         </Card>
 
         <div>
           <h2 className="text-sm font-medium text-mist-200">Pick a policy template</h2>
-          <p className="mt-1 text-xs text-mist-500">This is your account&rsquo;s entire security surface — the rules its key must obey. You&rsquo;ll set its details next.</p>
+          <p className="mt-1 text-xs text-mist-500">The rules its key must obey. You&rsquo;ll set the details next.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {ORDER.map((k) => {
               const meta = RULE_META[k];

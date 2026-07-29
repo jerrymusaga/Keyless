@@ -126,9 +126,8 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
             <div className="mt-5 border-t hairline pt-5">
               {locked ? (
                 <Notice tone="ok">
-                  This policy is <span className="font-medium">locked forever</span>. Its rule and settings
-                  can never change — not even with your control key. That&rsquo;s why this account can&rsquo;t
-                  be drained even if the key is stolen: it can only ever keep doing exactly what it does now.
+                  <span className="font-medium">Locked forever.</span> The rule and its settings can never change —
+                  not even with your key. That&rsquo;s what makes it undrainable.
                 </Notice>
               ) : (
                 <RuleConfig walletId={wid} ruleKey={rk} />
@@ -183,20 +182,13 @@ function WelcomeBanner({ walletId }: { walletId: string }) {
   return (
     <div className="rounded-xl border border-signal-500/30 bg-signal-500/[0.06] p-5">
       <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2.5 text-[13px] leading-relaxed">
+        <div className="space-y-2 text-[13px] leading-relaxed">
           <p className="text-mist-100">
             <span className="mr-1.5">🔐</span>
-            <span className="font-medium">Your Keyless account is live.</span> Its key was born inside a Flare
-            TEE — no one holds it. Not the app, not us, not even you.
+            <span className="font-medium">Your account is live.</span> Its key lives inside a Flare TEE — no one holds it, not even you.
           </p>
           <p className="text-mist-300">
-            <span className="mr-1.5">🛡️</span>Your policy is set. This account now does{" "}
-            <span className="text-mist-100">only what you allowed</span> — nothing else can happen.
-          </p>
-          <p className="text-mist-300">
-            <span className="mr-1.5">🛡️</span>Try to drain it right now — <span className="text-mist-100">no funding needed.</span> The
-            &ldquo;Try to break it&rdquo; panel below runs your real rule on-chain and refuses. That&rsquo;s the whole
-            point. <span className="text-mist-500">(Fund the deposit address when you want to send real payments.)</span>
+            <span className="mr-1.5">🛡️</span>It does <span className="text-mist-100">only what your policy allows.</span> Try to break it below — no funding needed.
           </p>
         </div>
         <button type="button" onClick={dismiss} aria-label="Dismiss" className="shrink-0 text-sm text-mist-500 transition-colors hover:text-mist-300">
@@ -231,9 +223,7 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
         <div className="min-w-0">
           <h2 className="text-[15px] font-medium text-mist-100">Deposit address</h2>
           <p className="mt-1 max-w-md text-[13px] leading-relaxed text-mist-400">
-            Send XRP here from anywhere — an exchange, a person, payroll. The signing key was born in the
-            enclave and <span className="text-mist-200">cannot be exported</span>, which is exactly why this
-            account can&rsquo;t be drained: it can only ever pay where your rule allows.
+            Send XRP here from anywhere. The key that signs lives in the enclave — it can only pay where your rule allows.
           </p>
         </div>
         <div className="text-right">
@@ -259,25 +249,10 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
 
       {xrpl && !bal?.funded && (
         <p className="mt-2 text-[12px] leading-relaxed text-mist-500">
-          Need testnet XRP? Fund this address in one step at the{" "}
-          <a
-            href="https://test.bithomp.com/faucet"
-            target="_blank"
-            rel="noreferrer"
-            className="text-signal-300 underline underline-offset-2 hover:text-signal-200"
-          >
+          Need testnet XRP? Paste this address into the{" "}
+          <a href="https://test.bithomp.com/faucet" target="_blank" rel="noreferrer" className="text-signal-300 underline underline-offset-2 hover:text-signal-200">
             Bithomp faucet ↗
-          </a>
-          {" "}(paste the address above), or pick another from the{" "}
-          <a
-            href="https://xrpl.org/resources/dev-tools/xrp-faucets"
-            target="_blank"
-            rel="noreferrer"
-            className="text-signal-300 underline underline-offset-2 hover:text-signal-200"
-          >
-            XRP faucet list ↗
-          </a>
-          .
+          </a>.
         </p>
       )}
 
@@ -355,17 +330,15 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
     <Card className="border-allow-500/20">
       <h2 className="text-[15px] font-medium text-mist-100">Lock this policy</h2>
       <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
-        Freeze the policy <span className="text-mist-200">permanently</span>. After this, its rule and
-        settings can never change — not with your control key, not even if it&rsquo;s stolen. Best once
-        you&rsquo;ve tested it above and won&rsquo;t edit it again.{" "}
-        <span className="text-mist-300">There is no unlock.</span>
+        Freeze it <span className="text-mist-200">permanently</span> — the rule can never change again, even if your
+        key is stolen. <span className="text-mist-300">There is no unlock.</span>
       </p>
 
       <div className="mt-4">
         {configured === false ? (
           <Notice tone="warn">
-            Configure this policy first — add at least one approved recipient above. Locking it empty would
-            freeze the account forever with nothing allowed.
+            Set the policy up first (add at least one approved recipient) — locking it empty would freeze the
+            account with nothing allowed.
           </Notice>
         ) : !arming ? (
           <Button variant="ghost" onClick={() => setArming(true)} disabled={configured !== true}>
@@ -471,9 +444,8 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
         )}
       </div>
       <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
-        Go ahead — try to send this account&rsquo;s money somewhere it shouldn&rsquo;t go. This asks your{" "}
-        <span className="text-mist-200">real rule on Coston2</span> — no gas, nothing moves. You won&rsquo;t
-        find a way through, and <span className="text-mist-200">that&rsquo;s the point.</span>
+        Try to send this account&rsquo;s money somewhere it shouldn&rsquo;t go. It asks your{" "}
+        <span className="text-mist-200">real rule on-chain</span> — no gas, nothing moves — and refuses.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -545,19 +517,19 @@ function ProofPanel({ rule, xrpl }: { rule: `0x${string}`; xrpl: string }) {
   const extLabel = ext !== null ? ext.toString() : String(EXTENSION_ID);
   const rows: { title: ReactNode; proof: ReactNode; link?: { href: string; label: string }; live?: boolean | null }[] = [
     {
-      title: "Your signing key was born inside a Flare TEE",
-      proof: <>Generated on-chain at creation, inside a confidential enclave. It was never imported and <span className="text-mist-200">cannot be exported</span> — not by us, not by you.</>,
+      title: "The signing key was born in a Flare TEE",
+      proof: <>Made inside the enclave — <span className="text-mist-200">it can&rsquo;t be exported,</span> by anyone.</>,
       link: xrpl ? { href: xrplAccount(xrpl), label: "the XRPL account ↗" } : undefined,
     },
     {
       title: <>Bound to Flare TEE extension <span className="font-mono">{extLabel}</span></>,
-      proof: <>The enclave is a registered Flare TEE extension, and this account is bound to it on Flare&rsquo;s TeeManager — verified live below.</>,
+      proof: <>Registered and bound on Flare&rsquo;s TeeManager — verified live.</>,
       link: { href: explorerAddress(ADDRESSES.teeManager), label: "Flare TeeManager ↗" },
       live: bound,
     },
     {
       title: "Governed only by this one rule",
-      proof: <>Your key obeys exactly one contract — nothing else can move the funds. Read the exact code that governs this account:</>,
+      proof: <>Nothing else can move the funds. Read the code:</>,
       link: { href: explorerAddress(rule), label: "the rule contract ↗" },
     },
   ];
@@ -566,8 +538,7 @@ function ProofPanel({ rule, xrpl }: { rule: `0x${string}`; xrpl: string }) {
     <Card>
       <h2 className="text-[15px] font-medium text-mist-100">Proof it&rsquo;s undrainable</h2>
       <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
-        Not a promise — anchors you can check on-chain yourself. <span className="text-mist-200">Keyless (this app) can ask
-        your account to pay. It can never sign for it</span> — only the enclave signs, and only what your rule allows.
+        Not a promise — check it on-chain. <span className="text-mist-200">This app can ask your account to pay, but can never sign for it.</span>
       </p>
       <ul className="mt-4 space-y-3">
         {rows.map((r, i) => (
@@ -681,10 +652,7 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
     <Card>
       <h2 className="text-[15px] font-medium text-mist-100">Spend</h2>
       <p className="mt-1 text-[13px] text-mist-400">
-        This runs your rule first. If the rule refuses, the enclave never signs — nothing leaves the account.
-      </p>
-      <p className="mt-1.5 text-[12px] text-signal-300/80">
-        Don&rsquo;t trust it? Try sending to an address you didn&rsquo;t allow — watch it get blocked. 🛡️
+        Runs your rule first. If it refuses, nothing leaves the account.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />

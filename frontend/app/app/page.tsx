@@ -54,17 +54,15 @@ export default function AppHome() {
       <div className="mx-auto max-w-xl">
         <h1 className="text-3xl font-medium tracking-[-0.02em] text-mist-100">Your XRP account, with rules.</h1>
         <p className="mt-4 leading-relaxed text-mist-400">
-          Keyless creates a control key <span className="text-mist-200">in this browser</span> — you hold it,
-          not us. It signs the rule changes for your accounts on Flare. The XRP itself is held by a key born
-          inside a secure enclave that can only ever sign what your rules allow.
+          Keyless makes a control key <span className="text-mist-200">in this browser</span> — yours, not ours. It signs
+          your rule changes. The XRP itself is held by a key sealed in an enclave that can only pay where your rules allow.
         </p>
         <div className="mt-8">
           <Button onClick={create}>Create my Keyless wallet →</Button>
         </div>
         <p className="mt-4 text-xs text-mist-500">
-          No extension, no seed phrase to write down. Your <span className="text-mist-300">control key</span>{" "}
-          stays in this browser and you can export it anytime to back it up. (Your XRP keys live in the
-          enclave and are never exportable — that&rsquo;s what keeps the accounts undrainable.)
+          No extension, no seed phrase. Export your control key anytime to back it up. The XRP keys never leave the
+          enclave — that&rsquo;s what keeps accounts undrainable.
         </p>
       </div>
     );

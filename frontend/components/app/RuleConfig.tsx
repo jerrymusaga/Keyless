@@ -184,7 +184,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
 
       <Field
         label="Add recipients"
-        hint="This account can only ever pay these addresses. Add a destination tag for a centralized-exchange deposit; leave it blank for a normal address (a friend, your own wallet)."
+        hint="The only addresses this account can pay. Add a destination tag for an exchange deposit; leave it blank otherwise."
       >
         <div className="space-y-2">
           {rows.map((r, i) => (
@@ -439,7 +439,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
     <div className="space-y-4">
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
 
-      <Field label="Who can it pay?" hint="Approved-only bounds it to a list you name; Anyone lets it pay any address — still capped by the allowance below.">
+      <Field label="Who can it pay?" hint="A named list, or anyone — either way it&rsquo;s capped by the allowance below.">
         <div className="flex gap-2">
           {([[true, "Approved recipients only"], [false, "Anyone"]] as const).map(([val, label]) => (
             <button
@@ -472,7 +472,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       </Field>
 
-      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget that hard-stops. Resets and dates use UTC (on-chain time), not your local timezone.">
+      <Field label="How is the limit measured?" hint="Rolling resets a fixed length after you set it; Calendar resets on real boundaries; Until a date is a one-time budget. Times are UTC.">
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {([["rolling", "Rolling window"], ["calendar", "Calendar period"], ["until", "Until a date"]] as const).map(([val, label]) => (
@@ -745,15 +745,13 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   return (
     <div className="space-y-4">
       <Notice tone="info">
-        The full round-trip, locked to your own account. Mint XRP into FXRP, put it to work in Flare vaults,
-        and bring it home — every step lands in this account&rsquo;s own Flare account. Sending FXRP to anyone
-        else is blocked on-chain.
+        Mint XRP into FXRP, earn in Flare vaults, and bring it home — every step lands in your own account.
+        Sending FXRP anywhere else is blocked.
       </Notice>
 
       {notReady ? (
         <Notice tone="info">
-          Setting up your Flare account… it appears here automatically a few seconds after the account is
-          created. No need to refresh.
+          Setting up your Flare account… it appears here automatically, no refresh needed.
         </Notice>
       ) : (
         <>
@@ -905,8 +903,7 @@ function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
         </Notice>
       )}
       <Notice tone="info">
-        Set the payee, cap, and condition here. Funds stay locked until someone submits a Flare Data
-        Connector proof of the condition (proof submission is an advanced step, done outside this form).
+        Funds stay locked until Flare&rsquo;s Data Connector proves the condition. (Submitting the proof is an advanced step, done outside this form.)
       </Notice>
       <Field label="Payee"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
       <Field label="Cap"><NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" /></Field>
