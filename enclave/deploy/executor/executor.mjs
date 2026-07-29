@@ -37,7 +37,11 @@ const VERIFIER_URL = (process.env.VERIFIER_URL || "https://fdc-verifiers-testnet
 // commit; override with VERIFIER_API_KEY for a dedicated (non-rate-limited) verifier in production.
 const VERIFIER_API_KEY = process.env.VERIFIER_API_KEY || "00000000-0000-0000-0000-000000000000";
 const DA_LAYER_URL = (process.env.DA_LAYER_URL || "https://ctn2-data-availability.flare.network").replace(/\/$/, "");
-const ATT_TYPE = process.env.ATTESTATION_TYPE || "Payment";
+// Direct minting verifies IXRPPayment (fassets TransactionAttestation.verifyXRPPayment ->
+// fdcVerification.verifyXRPPayment), whose FDC attestation type is "XRPPayment" — NOT the generic
+// "Payment". Confirmed against verifier/xrp/XRPPayment/prepareRequest (200 with {transactionId,proofOwner};
+// generic Payment 400s on that body, wanting inUtxo/utxo). This is the type the executor must request.
+const ATT_TYPE = process.env.ATTESTATION_TYPE || "XRPPayment";
 const SOURCE_ID = process.env.SOURCE_ID || "testXRP";
 const XRP_PATH = process.env.VERIFIER_XRP_PATH || "xrp";
 

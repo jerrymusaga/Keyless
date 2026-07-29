@@ -29,7 +29,7 @@ node executor.mjs 7A40F6F3528A7491314129C76C88334A50DD36ED3AA4998689828993ECD3E1
 | `VERIFIER_API_KEY` | FDC verifier `X-API-KEY`. Defaults to Flare's **public, rate-limited testnet key** `00000000-0000-0000-0000-000000000000` (documented at dev.flare.network/fdc/getting-started; confirmed 200 vs 401 without it). Override only for a dedicated production verifier. |
 | `DA_LAYER_URL` | Coston2 DA layer. Defaults to `https://ctn2-data-availability.flare.network`. |
 | `RPC_URL` | Coston2 C-chain RPC. Has a default. |
-| `ATTESTATION_TYPE` / `SOURCE_ID` / `VERIFIER_XRP_PATH` | Default `Payment` / `testXRP` / `xrp`. **Confirm** the exact attestation type used for XRP *direct-minting* proofs — the on-chain struct is the XRP-specific `IXRPPayment` (`RequestBody = {transactionId, proofOwner}`, richer `ResponseBody`), which may be served under a dedicated type/endpoint rather than the generic `Payment`. |
+| `ATTESTATION_TYPE` / `SOURCE_ID` / `VERIFIER_XRP_PATH` | Default `XRPPayment` / `testXRP` / `xrp`. Confirmed: fassets `DirectMintingFacet.executeDirectMinting(IXRPPayment.Proof)` → `TransactionAttestation.verifyXRPPayment` → `fdcVerification.verifyXRPPayment`, i.e. the dedicated **`XRPPayment`** type (`RequestBody = {transactionId, proofOwner}`), served at `verifier/xrp/XRPPayment/prepareRequest` — NOT the generic `Payment` (which wants `{transactionId, inUtxo, utxo}`). |
 
 ## Flow (Flare's canonical FDC pattern)
 
