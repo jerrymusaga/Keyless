@@ -44,14 +44,14 @@ Relay, FdcVerification, AssetManagerFXRP `0xc1Ca88b9…`).
 
 ## Status
 
-The on-chain half (addresses, ABIs incl. `IXRPPayment.Proof`, request→round→proof→execute flow) follows
-Flare's canonical FDC reference. The verifier **API key** is no longer a blocker — Flare's public testnet
-key is now the default and was confirmed live against `verifier/xrp/Payment/prepareRequest` (200 with the
-key, 401 without). Running it against a real deposit tx should mint FXRP to the account's own Flare Smart
-Account — the last hop of the undrainable XRP → FXRP on-ramp. Remaining thing to confirm empirically with a
-**real** XRPL deposit tx: that direct-minting proofs are served under the generic `Payment` type (the
-on-chain call decodes into the XRP-specific `IXRPPayment.Proof`); if FAssets requires a dedicated type, only
-`ATTESTATION_TYPE`/`VERIFIER_XRP_PATH` change.
+**PROVEN END-TO-END (2026-07-29).** Ran against the pending test deposit
+`7A40F6F3…ECD3E1E4` (2 XRP → Core Vault): all five steps executed — `XRPPayment` prepareRequest with the
+public key → `FdcHub.requestAttestation` → round 1409545 finalized → DA-layer proof (fully-populated
+`IXRPPayment` responseBody: memo `0x4642505266410018…`, receivedAmount 2000000) → `executeDirectMinting`.
+The final call reverted only with `PaymentAlreadyConfirmed()` (`0x18dce79f`) — the double-spend guard,
+because a permissionless Flare executor had already minted this 4-day-old deposit (confirmed: the memo
+recipient holds the 2 FXRP). So the whole pipeline works; the only reason it didn't mint *here* is that the
+deposit was already consumed. A **fresh, unminted** deposit tx hash will mint cleanly.
 
 ## Self-serve vs service
 
