@@ -119,11 +119,10 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
 
       {hasRule && rk ? (
         <>
+          <CapabilityCard walletId={wid} ruleKey={rk} />
           <Card>
-            <h2 className="text-[15px] font-medium text-mist-100">Rule — {RULE_META[rk].name}</h2>
-            <p className="mt-1 text-[13px] text-mist-400">{RULE_META[rk].tagline}</p>
-            <p className="mt-1 text-xs text-signal-300/80">Protects against: {RULE_META[rk].protects}</p>
-            <div className="mt-5 border-t hairline pt-5">
+            <h2 className="text-[15px] font-medium text-mist-100">{locked ? "Locked" : "Set up what it can do"}</h2>
+            <div className="mt-4">
               {locked ? (
                 <Notice tone="ok">
                   <span className="font-medium">Locked forever.</span> The rule and its settings can never change —
@@ -134,7 +133,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
               )}
             </div>
           </Card>
-          <BreakItPanel walletId={wid} rule={rule} />
+          <div id="break-it"><BreakItPanel walletId={wid} rule={rule} /></div>
           <ProofPanel rule={rule} xrpl={xrpl} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
@@ -158,6 +157,83 @@ function AccountSkeleton() {
       <Card><Skeleton className="h-4 w-32" /><Skeleton className="mt-3 h-16 w-full" /></Card>
       <Card><Skeleton className="h-4 w-44" /><Skeleton className="mt-3 h-9 w-2/3" /></Card>
     </div>
+  );
+}
+
+/**
+ * The confidence centrepiece: a plain-English readout of exactly what this account CAN and CAN'T do,
+ * generated from its live on-chain config. Turns "policy" into "here's what your money is allowed to do."
+ * Exchange is fully translated from config; other rules show their gist until per-policy detail is added.
+ */
+function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
+  const [cfg, setCfg] = useState<{ recipients?: { address: string; requireTag: boolean; tag: number }[]; capDrops?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let stop = false;
+    fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: ruleKey, walletId }), cache: "no-store" })
+      .then((r) => r.json())
+      .then((b) => { if (!stop) { setCfg(b); setLoading(false); } })
+      .catch(() => { if (!stop) setLoading(false); });
+    return () => { stop = true; };
+  }, [walletId, ruleKey]);
+
+  const can: ReactNode[] = [];
+  const cant: ReactNode[] = [];
+
+  if (ruleKey === "exchange") {
+    for (const r of cfg?.recipients ?? []) {
+      can.push(<>Pay <span className="font-mono text-mist-200">{addr(r.address)}</span>{r.requireTag ? <> with tag <span className="font-mono text-mist-300">{r.tag}</span></> : null}</>);
+    }
+    if (cfg?.capDrops && cfg.capDrops !== "0") can.push(<>Send at most <span className="text-mist-200">{formatDrops(BigInt(cfg.capDrops))}</span> in one payment</>);
+    cant.push("Send to anyone else");
+  } else if (ruleKey === "fxrp") {
+    can.push("Mint FXRP into this account's own Flare account");
+    can.push("Earn in Flare vaults, and bring it home to XRP");
+    cant.push("Send FXRP to anyone else");
+  } else {
+    can.push(RULE_META[ruleKey].tagline);
+    cant.push("Send anywhere the rules don't allow");
+  }
+  cant.push(<>Be drained — <span className="text-mist-300">even if your key is stolen</span></>);
+
+  const notSetUp = ruleKey === "exchange" && !loading && (cfg?.recipients?.length ?? 0) === 0;
+
+  return (
+    <Card className="border-signal-500/25 bg-gradient-to-b from-signal-500/[0.04] to-transparent">
+      <h2 className="text-[15px] font-medium text-mist-100">What this account can &amp; can&rsquo;t do</h2>
+      {loading ? (
+        <div className="mt-3 space-y-2"><Skeleton className="h-4 w-2/3" /><Skeleton className="h-4 w-1/2" /></div>
+      ) : (
+        <div className="mt-3 grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-allow-500">Can</p>
+            <ul className="mt-2 space-y-1.5">
+              {notSetUp ? (
+                <li className="text-[13px] text-mist-500">Not set up yet — choose who it can pay below.</li>
+              ) : (
+                can.map((c, i) => (
+                  <li key={i} className="flex gap-2 text-[13px] text-mist-300"><span className="mt-px text-allow-500">✓</span><span>{c}</span></li>
+                ))
+              )}
+            </ul>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-refuse-400">Can&rsquo;t</p>
+            <ul className="mt-2 space-y-1.5">
+              {cant.map((c, i) => (
+                <li key={i} className="flex gap-2 text-[13px] text-mist-300"><span className="mt-px text-refuse-400">✕</span><span>{c}</span></li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      <div className="mt-4">
+        <Button variant="ghost" onClick={() => document.getElementById("break-it")?.scrollIntoView({ behavior: "smooth", block: "center" })}>
+          Try to break it →
+        </Button>
+      </div>
+    </Card>
   );
 }
 

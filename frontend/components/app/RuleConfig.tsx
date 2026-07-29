@@ -156,7 +156,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
   return (
     <div className="space-y-4">
       {saved && saved.length > 0 && (
-        <Field label="Currently approved" hint="Live on-chain — the only addresses this account can pay. Remove any to revoke it.">
+        <Field label="Already allowed" hint="Remove any to stop this account from paying it.">
           <div className="space-y-2">
             {saved.map((r) => (
               <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -183,8 +183,8 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
       )}
 
       <Field
-        label="Add recipients"
-        hint="The only addresses this account can pay. Add a destination tag for an exchange deposit; leave it blank otherwise."
+        label="Who can this account pay?"
+        hint="These are the only addresses it can ever pay. For an exchange deposit, add its destination tag; leave it blank otherwise."
       >
         <div className="space-y-2">
           {rows.map((r, i) => (
@@ -210,11 +210,11 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       </Field>
 
-      <Field label="Max per transaction (optional)" hint="Cap the size of any single payment. Leave blank for no limit.">
+      <Field label="Most it can send in one payment?" hint="Optional cap on any single payment. Leave blank for no limit.">
         <NumberInput value={maxTx} onValueChange={setMaxTx} decimal placeholder="no limit" />
       </Field>
 
-      <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save policy"}</Button>
+      <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
   );
