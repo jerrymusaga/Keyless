@@ -798,7 +798,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">② 🌱 Put FXRP to work</p>
             <p className="mt-0.5 text-[12px] text-mist-500">
-              Deposit liquid FXRP into a Flare yield vault to earn. You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.{" "}
+              Deposit liquid FXRP into a Flare yield vault to earn — <span className="text-mist-400">Firelight and Upshift are yield protocols on Flare; the number is which vault.</span> You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.{" "}
               <span className="text-mist-400">Note: pulling it back out is a two-step claim we&rsquo;re still finishing.</span>
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -810,7 +810,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                 {vaultList.length === 0 && <option value="">…</option>}
                 {vaultList.map((v) => (
                   <option key={v.vaultId.toString()} value={v.vaultId.toString()}>
-                    {VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} · #{v.vaultId.toString()}
+                    {VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} yield vault #{v.vaultId.toString()}
                   </option>
                 ))}
               </select>
@@ -829,7 +829,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   const key = v.vaultId.toString();
                   return (
                     <div key={key} className="flex items-center justify-between gap-2 border-t hairline pt-2 first:border-t-0 first:pt-0">
-                      <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} <span className="text-mist-500">· #{key}</span></p>
+                      <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} yield vault <span className="text-mist-500">#{key}</span></p>
                       <p className="text-[12px]"><span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> <span className="text-mist-500">earning</span></p>
                     </div>
                   );
