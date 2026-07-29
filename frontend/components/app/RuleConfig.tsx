@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { keccak256, toBytes, toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
@@ -583,10 +583,17 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [withdraw, setWithdraw] = useState("");
   const [home, setHome] = useState("");
 
+  const settleBaseline = useRef<bigint | null>(null); // balance snapshot when an action was submitted
+
   const readBalance = useCallback(async (account: string) => {
     try {
       const b = await publicClient.readContract({ address: FXRP_TOKEN, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [account as `0x${string}`] }) as bigint;
       setBal(b);
+      // The moment the balance actually moves, the pending action has landed on-chain — stop "settling".
+      if (settleBaseline.current !== null && b !== settleBaseline.current) {
+        settleBaseline.current = null;
+        setSettling(false);
+      }
     } catch { /* transient */ }
   }, []);
 
@@ -617,17 +624,23 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     return () => clearInterval(t);
   }, [pa, load]);
 
-  // Actions complete a few seconds later via an executor. Poll the FXRP balance for a short window so the
-  // number the user sees reflects the mint/deposit/withdraw once it lands, without a manual refresh.
+  // Keep the FXRP balance fresh the whole time the panel is open, so a mint/deposit/redeem shows up on its
+  // own — a mint can take a minute or two to complete via the executor, and the user shouldn't have to
+  // refresh to see it. Polls a little faster while an action is settling.
+  useEffect(() => {
+    if (!pa) return;
+    const t = setInterval(() => readBalance(pa), settling ? 6000 : 15000);
+    return () => clearInterval(t);
+  }, [pa, settling, readBalance]);
+
+  // Flag that we're waiting for a submitted action to land. The poll above clears it the instant the
+  // balance moves; the timeout is just a safety cap (mint via the FDC executor can take ~1–2 min).
   const settle = useCallback(() => {
     if (!pa) return;
+    settleBaseline.current = bal ?? 0n;
     setSettling(true);
-    let n = 0;
-    const t = setInterval(() => {
-      readBalance(pa);
-      if (++n >= 6) { clearInterval(t); setSettling(false); }
-    }, 5000);
-  }, [pa, readBalance]);
+    setTimeout(() => { settleBaseline.current = null; setSettling(false); }, 180_000);
+  }, [pa, bal]);
 
   // Mint = pay the Core Vault a memo crediting THIS account's own FSA personal account (the rule recomputes
   // it and rejects any other target). We build the exact same memo the rule expects.
@@ -644,8 +657,9 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     try {
       const memo = fxrpMintMemo(pa as `0x${string}`);
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
+      const sent = mintAmt;
       setMintAmt("");
-      setMsg({ tone: "ok", text: `Sent ${mintAmt} XRP to the Core Vault — FXRP will land in your own Flare account. An executor completes the mint shortly.` });
+      setMsg({ tone: "ok", text: `Sent ${sent} XRP to mint FXRP. It lands in your Flare account (shown above) in ~1–2 min — the balance updates on its own, no refresh needed.` });
       settle();
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
@@ -719,19 +733,22 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
 
       {notReady ? (
         <Notice tone="info">
-          Your Flare account address appears once the enclave has provisioned this wallet&rsquo;s XRPL deposit
-          address (just after creation). Refresh in a moment.
+          Setting up your Flare account… it appears here automatically a few seconds after the account is
+          created. No need to refresh.
         </Notice>
       ) : (
-        <Field label="Your FXRP lands here (Flare Smart Account)" hint="Computed on-chain from this wallet's own XRPL address — not configurable, so a stolen key can't repoint the mint.">
+        <Field
+          label="Your FXRP lands here — this account's own Flare account"
+          hint="A dedicated Flare Smart Account for this wallet — NOT your control / gas key. It's computed on-chain from the enclave key, so nothing (not even a stolen key) can repoint where your FXRP goes. Flare covers its gas; you never fund it."
+        >
           <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
             <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{pa ?? "…"}</code>
             {pa && <Copy text={pa} />}
           </div>
           <div className="mt-1.5 flex items-center gap-2 text-[12px]">
-            <span className="text-mist-500">Balance:</span>
+            <span className="text-mist-500">FXRP balance:</span>
             <span className="font-mono text-mist-200">{bal === null ? "…" : `${fmtFxrp(bal)} FXRP`}</span>
-            {settling && <span className="text-signal-400">· ⏳ completing on-chain…</span>}
+            {settling && <span className="text-signal-400">· ⏳ landing on-chain (up to ~2 min)…</span>}
           </div>
         </Field>
       )}
@@ -740,7 +757,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       <div className="rounded-xl border hairline bg-ink-900/60 p-4">
         <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
         <p className="mt-0.5 text-[12px] text-mist-500">
-          Sends XRP from this account to the FAssets Core Vault{coreVault ? <> (<code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}; you receive FXRP in your own Flare account once an executor relays the proof.
+          Sends XRP from this account to mint FXRP{coreVault ? <> (via the FAssets Core Vault <code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}. It lands in your Flare account above — not your control key — about a minute or two later.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
