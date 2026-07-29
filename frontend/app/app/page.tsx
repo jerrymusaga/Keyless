@@ -123,6 +123,10 @@ export default function AppHome() {
 function AccountRow({ row }: { row: Row }) {
   const name = ruleName(row.rule);
   const hasRule = row.rule !== ZERO_ADDRESS;
+  const [blocked, setBlocked] = useState(0);
+  useEffect(() => {
+    try { setBlocked(Number(localStorage.getItem(`kl_blocked_${row.walletId}`) || 0)); } catch { /* no storage */ }
+  }, [row.walletId]);
   return (
     <Link
       href={`/app/${row.walletId}`}
@@ -142,11 +146,14 @@ function AccountRow({ row }: { row: Row }) {
               </span>
             )}
           </div>
-          <div className="mt-1.5 font-mono text-xs text-mist-500">
+          <div className="mt-1.5 flex items-center gap-2.5 font-mono text-xs text-mist-500">
             {row.xrplAddress ? (
               <span title="XRPL deposit address (from chain)">{addr(row.xrplAddress)}</span>
             ) : (
               <span className="text-amber-200/70">provisioning XRPL address…</span>
+            )}
+            {blocked > 0 && (
+              <span className="text-allow-500/90" title="Drain attempts this account refused">🛡️ {blocked} refused</span>
             )}
           </div>
         </div>

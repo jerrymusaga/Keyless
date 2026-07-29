@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
+import { motion, AnimatePresence } from "motion/react";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig } from "@/components/app/RuleConfig";
 import { Button, Card, Copy, Field, Input, Notice, Spinner } from "@/components/app/ui";
@@ -128,7 +129,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
               )}
             </div>
           </Card>
-          <TestPanel walletId={wid} rule={rule} />
+          <BreakItPanel walletId={wid} rule={rule} />
           <SpendPanel walletId={wid} xrpl={xrpl} />
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
@@ -171,8 +172,9 @@ function WelcomeBanner({ walletId }: { walletId: string }) {
             <span className="text-mist-100">only what you allowed</span> — nothing else can happen.
           </p>
           <p className="text-mist-300">
-            <span className="mr-1.5">💰</span>Fund the deposit address below to activate it — then try a payment
-            your policy blocks and watch it get stopped. <span className="text-mist-100">That&rsquo;s the whole point.</span>
+            <span className="mr-1.5">🛡️</span>Try to drain it right now — <span className="text-mist-100">no funding needed.</span> The
+            &ldquo;Try to break it&rdquo; panel below runs your real rule on-chain and refuses. That&rsquo;s the whole
+            point. <span className="text-mist-500">(Fund the deposit address when you want to send real payments.)</span>
           </p>
         </div>
         <button type="button" onClick={dismiss} aria-label="Dismiss" className="shrink-0 text-sm text-mist-500 transition-colors hover:text-mist-300">
@@ -360,46 +362,143 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
   );
 }
 
-function TestPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${string}` }) {
+// A few well-formed "stranger" r-addresses to stand in for a thief. The dry-run does a string compare
+// against the on-chain allowlist, so these just need to look like real addresses — nothing is sent.
+const STRANGERS = [
+  "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT",
+  "rUn84CUYbNjRoTQ6mSW7BVJPSVJNLb1QLp",
+  "rDNvpqSzJzk8jVLBrGHMpuvSb3iBaz5tYs",
+];
+const EASE = [0.16, 1, 0.3, 1] as const;
+
+/**
+ * The block moment — the emotional centre of the product. "Go ahead, try to drain it" runs the account's
+ * REAL rule on-chain (dryRunAuthorize: a gasless eth_call, nothing moves) and the refusal is the payoff.
+ * Every refusal bumps a persistent per-account counter and offers a shareable proof. This is what makes
+ * "undrainable" felt rather than claimed.
+ */
+function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${string}` }) {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
+  const [blocked, setBlocked] = useState(0);
+  const [copied, setCopied] = useState(false);
 
-  const test = async () => {
-    if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
-    const n = Number(amount);
-    if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
+  useEffect(() => {
+    try { setBlocked(Number(localStorage.getItem(`kl_blocked_${walletId}`) || 0)); } catch { /* no storage */ }
+  }, [walletId]);
+
+  const run = async (recip: string, xrp: number, label: string) => {
     setBusy(true);
     setResult(null);
-    const v = await dryRunAuthorize(rule, walletId, to.trim(), BigInt(Math.round(n * 1e6)));
-    setResult({ ok: v.allowed, reason: v.reason, label: `${n} XRP → ${addr(to.trim())}` });
+    const v = await dryRunAuthorize(rule, walletId, recip, BigInt(Math.round(xrp * 1e6)));
+    setResult({ ok: v.allowed, reason: v.reason, label });
+    if (!v.allowed) {
+      setBlocked((b) => {
+        const n = b + 1;
+        try { localStorage.setItem(`kl_blocked_${walletId}`, String(n)); } catch { /* ignore */ }
+        return n;
+      });
+    }
     setBusy(false);
   };
 
+  const drain = () => {
+    const thief = STRANGERS[Math.floor(Math.random() * STRANGERS.length)];
+    run(thief, 10000, `Drain 10,000 XRP → ${addr(thief)}`);
+  };
+
+  const custom = () => {
+    if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
+    run(to.trim(), n, `${n} XRP → ${addr(to.trim())}`);
+  };
+
+  const share = async () => {
+    const text = "My Keyless XRP account just refused a drain on-chain — even I can't send where its policy forbids. Verified live on Coston2. 🛡️";
+    try {
+      await navigator.clipboard.writeText(`${text}\n${window.location.origin}/see`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard blocked */ }
+  };
+
   return (
-    <Card>
-      <h2 className="text-[15px] font-medium text-mist-100">Test a payment (dry-run)</h2>
-      <p className="mt-1 text-[13px] text-mist-400">
-        Check whether a payment would pass your rule — <span className="text-mist-200">without sending anything.</span>{" "}
-        It reads the real rule on-chain, so it&rsquo;s a safe way to sanity-check your setup before you fund or lock.
+    <Card className="border-signal-500/25 bg-gradient-to-b from-signal-500/[0.04] to-transparent">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[15px] font-medium text-mist-100">Try to break it 🛡️</h2>
+        {blocked > 0 && (
+          <span className="flex items-center gap-1.5 text-[12px] text-mist-400">
+            <span className="text-allow-500">🛡️</span>refused
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.span
+                key={blocked}
+                initial={{ y: -8, opacity: 0, scale: 0.7 }}
+                animate={{ y: 0, opacity: 1, scale: 1 }}
+                exit={{ y: 8, opacity: 0, position: "absolute" }}
+                transition={{ type: "spring", stiffness: 500, damping: 18 }}
+                className="font-mono font-semibold text-allow-500"
+              >
+                {blocked}
+              </motion.span>
+            </AnimatePresence>
+            drain{blocked !== 1 ? "s" : ""} so far
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[13px] leading-relaxed text-mist-400">
+        Go ahead — try to send this account&rsquo;s money somewhere it shouldn&rsquo;t go. This asks your{" "}
+        <span className="text-mist-200">real rule on Coston2</span> — no gas, nothing moves. You won&rsquo;t
+        find a way through, and <span className="text-mist-200">that&rsquo;s the point.</span>
       </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button onClick={drain} disabled={busy}>{busy ? "Asking the rule…" : "Try to drain it →"}</Button>
+        <span className="text-[12px] text-mist-500">or test a specific payment</span>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />
         <div className="flex gap-2">
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
-          <Button variant="ghost" onClick={test} disabled={busy}>{busy ? "…" : "Test"}</Button>
+          <Button variant="ghost" onClick={custom} disabled={busy}>Test</Button>
         </div>
       </div>
-      {result && (
-        <div className="mt-3">
-          <Notice tone={result.ok ? "ok" : "error"}>
-            {result.ok
-              ? `✓ ${result.label} would be accepted — the enclave would sign it.`
-              : `✗ ${result.label} would be refused: “${result.reason ?? "not permitted"}”. Nothing would leave the account.`}
-          </Notice>
-        </div>
-      )}
+
+      <div className="mt-4 min-h-[68px]">
+        <AnimatePresence mode="wait">
+          {result ? (
+            <motion.div
+              key={result.label + (result.ok ? "ok" : "no")}
+              initial={{ opacity: 0, scale: 0.96, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: EASE }}
+              className={`rounded-xl border px-4 py-3.5 ${result.ok ? "border-allow-500/40 bg-allow-500/[0.06]" : "border-refuse-500/40 bg-refuse-500/[0.06]"}`}
+            >
+              <div className={`flex items-center gap-2 text-[14px] font-medium ${result.ok ? "text-allow-500" : "text-refuse-400"}`}>
+                <motion.span initial={{ scale: 0.4, rotate: -8 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 420, damping: 12 }}>
+                  {result.ok ? "✓" : "🛡️"}
+                </motion.span>
+                {result.ok ? "Allowed" : "Refused"} — <span className="font-normal opacity-90">{result.label}</span>
+              </div>
+              <div className={`mt-1 text-[13px] ${result.ok ? "text-allow-500/90" : "text-refuse-400/90"}`}>
+                {result.ok
+                  ? "Your rule permits this — the enclave would sign and send it."
+                  : `“${result.reason ?? "not permitted"}”. Nothing left the account — even with the key, it can't go there.`}
+              </div>
+              {!result.ok && (
+                <button type="button" onClick={share} className="mt-2 text-[12px] font-medium text-signal-300 underline underline-offset-2 transition-colors hover:text-signal-200">
+                  {copied ? "Copied ✓" : "Share this proof ↗"}
+                </button>
+              )}
+            </motion.div>
+          ) : (
+            <p className="text-[12px] text-mist-500">The refusal is the fun part — it&rsquo;s your rule holding the line on-chain, not us.</p>
+          )}
+        </AnimatePresence>
+      </div>
     </Card>
   );
 }
