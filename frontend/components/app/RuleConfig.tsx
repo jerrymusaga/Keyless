@@ -21,6 +21,14 @@ function assertXrpl(a: string) {
   if (!XRPL_ADDRESS_RE.test(a.trim())) throw new Error("that isn't a valid XRPL r-address");
 }
 
+/** Nudge the account page's "can & can't" card (a sibling component) to refetch the live config — now, and
+ *  again after the explorer has had a few seconds to index the change — so the user needn't refresh. */
+function signalConfigChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event("kl:config-changed"));
+  setTimeout(() => window.dispatchEvent(new Event("kl:config-changed")), 6000);
+}
+
 // Window units. The RateLimitRule takes `period` as raw seconds, so any count × unit works — the UI just
 // composes them. Order matters: periodLabel picks the largest unit that divides a stored period evenly.
 const UNITS: { label: string; seconds: number }[] = [
@@ -90,6 +98,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
       await write({ address: RULES.exchange as `0x${string}`, abi: RULE_ABIS.exchange as never, functionName: "remove", args: [walletId, address] });
       setSaved((s) => (s ? s.filter((r) => r.address !== address) : s)); // optimistic
       setMsg({ tone: "ok", text: `Removed ${addr(address)}. This account can no longer pay it.` });
+      signalConfigChanged(); // nudge the "can & can't" card to refetch (now + after indexing)
       setTimeout(loadSaved, 5000); // reconcile once the explorer indexes the removal
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
@@ -145,6 +154,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
       setRows([{ address: "", tag: "" }]);
       setMaxTx("");
       setMsg({ tone: "ok", text: `Saved. This account can now pay ${valid.length} approved recipient${valid.length > 1 ? "s" : ""}${capNote} — and nowhere else.` });
+      signalConfigChanged();
       setTimeout(loadSaved, 5000);
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
@@ -210,7 +220,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       </Field>
 
-      <Field label="Most it can send in one payment?" hint="Optional cap on any single payment. Leave blank for no limit.">
+      <Field label="Most it can send in one payment?" hint="One cap on any single payment — applies to every recipient, not each one separately. Leave blank for no limit.">
         <NumberInput value={maxTx} onValueChange={setMaxTx} decimal placeholder="no limit" />
       </Field>
 

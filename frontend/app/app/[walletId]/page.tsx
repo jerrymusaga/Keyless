@@ -171,11 +171,18 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
 
   useEffect(() => {
     let stop = false;
-    fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: ruleKey, walletId }), cache: "no-store" })
-      .then((r) => r.json())
-      .then((b) => { if (!stop) { setCfg(b); setLoading(false); } })
-      .catch(() => { if (!stop) setLoading(false); });
-    return () => { stop = true; };
+    const fetchCfg = () =>
+      fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: ruleKey, walletId }), cache: "no-store" })
+        .then((r) => r.json())
+        .then((b) => { if (!stop) { setCfg(b); setLoading(false); } })
+        .catch(() => { if (!stop) setLoading(false); });
+    fetchCfg();
+    // The config is read from indexed events (a few seconds' lag), and edits happen in a sibling panel —
+    // so poll, and refetch immediately when a save broadcasts, instead of making the user refresh.
+    const t = setInterval(fetchCfg, 8000);
+    const onChange = () => fetchCfg();
+    window.addEventListener("kl:config-changed", onChange);
+    return () => { stop = true; clearInterval(t); window.removeEventListener("kl:config-changed", onChange); };
   }, [walletId, ruleKey]);
 
   const can: ReactNode[] = [];
