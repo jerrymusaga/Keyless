@@ -829,6 +829,19 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             </div>
           </div>
 
+          {/* Borrow — coming soon. FXRP is the umbrella for putting your XRP to work on Flare; yield is live,
+              lending (and more DeFi) come next, each kept undrainable. */}
+          <div className="rounded-xl border hairline bg-ink-900/40 p-4 opacity-80">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[14px] font-medium text-mist-100">🏛️ Borrow against your FXRP</p>
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200/90">Soon</span>
+            </div>
+            <p className="mt-0.5 text-[12px] text-mist-500">
+              Unlock cash from your FXRP as collateral — and a stolen key still can&rsquo;t take it. More ways to put
+              your XRP to work on Flare are coming, each kept undrainable.
+            </p>
+          </div>
+
           {/* Positions (view-only for now — see the note) */}
           {positions.length > 0 && (
             <div className="rounded-xl border hairline bg-ink-900/60 p-4">

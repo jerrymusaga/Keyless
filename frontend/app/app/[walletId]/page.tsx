@@ -135,7 +135,9 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           </Card>
           <div id="break-it"><BreakItPanel walletId={wid} rule={rule} /></div>
           <ProofPanel rule={rule} xrpl={xrpl} />
-          <SpendPanel walletId={wid} xrpl={xrpl} />
+          {/* FXRP has its own mint / earn / bring-home actions, and the rule blocks all other payments —
+              so a generic "Spend to an r-address" would only ever be refused. Hide it for FXRP. */}
+          {rk !== "fxrp" && <SpendPanel walletId={wid} xrpl={xrpl} />}
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
       ) : (
