@@ -38,7 +38,45 @@ export const ADDRESSES = {
   owner: "0xc760AB37E00082202e1659C256E01372f1739886",
   /** The governance-attested TEE machine serving extension 65645. */
   teeMachine: "0xD47F3c4E26173df11667c5Ad3723e66Fa45dD646",
+  /** Flare Smart Accounts diamond (SmartAccountManager) on Coston2 — where FXRP mints land and DeFi vaults
+   *  live. Its ReaderFacet exposes each personal account's FXRP portfolio + the vault registry. */
+  fsaDiamond: "0x434936d47503353f06750Db1A444DBDC5F0AD37c",
 } as const;
+
+/** VaultType enum from IVaultsFacet: 0 None, 1 Firelight, 2 Upshift. */
+export const VAULT_TYPE_NAME: Record<number, string> = { 0: "—", 1: "Firelight", 2: "Upshift" };
+
+/** FSA ReaderFacet — reads a personal account's whole FXRP portfolio in one call: liquid FXRP + each
+ *  vault position (shares + FXRP-equivalent `assets`) + the registered vault list. */
+export const FSA_READER_ABI = [
+  {
+    type: "function",
+    name: "getBalances",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "natBalance", type: "uint256" },
+          { name: "wNat", type: "tuple", components: [{ name: "token", type: "address" }, { name: "balance", type: "uint256" }] },
+          { name: "fXrp", type: "tuple", components: [{ name: "token", type: "address" }, { name: "balance", type: "uint256" }] },
+          {
+            name: "vaults",
+            type: "tuple[]",
+            components: [
+              { name: "vaultId", type: "uint256" },
+              { name: "vaultAddress", type: "address" },
+              { name: "vaultType", type: "uint8" },
+              { name: "shares", type: "uint256" },
+              { name: "assets", type: "uint256" },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+] as const;
 
 /** The rule modules. Each is one readable contract; a wallet points at one. */
 // Three distinct policy primitives, one axis each: WHO can be paid (exchange), HOW MUCH over time

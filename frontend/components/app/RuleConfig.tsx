@@ -6,7 +6,7 @@ import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
-import { ADDRESSES, ACCOUNTS_ABI, INIT_FEE, RULES, RULE_ABIS, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type RuleKey } from "@/lib/keyless";
 
 /** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
 const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
@@ -543,14 +543,21 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
 // FSA XRPL provider wallet (Coston2) — every instruction is a payment here, carrying the reference.
 const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
-const FIRELIGHT_VAULT = 1; // default Flare yield vault id (type 1 -> deposit 0x11 / redeem 0x12)
 const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
+const LOT_FXRP = 10; // FAssets redeems in whole lots; lotSize 1e7 AMG × granularity 1 = 1e7 UBA = 10 FXRP.
 
-// FXRP (FAsset) token on Coston2 — read from AssetManagerFXRP.fAsset(); 6 decimals like XRP. lotSize = 1e7
-// AMG × granularity 1 = 1e7 UBA = 10 FXRP, so FAssets redeems in whole lots of 10 FXRP.
-const FXRP_TOKEN = "0x0b6A3645c240605887a5532109323A3E12273dc7" as const;
-const LOT_FXRP = 10; // 1 redemption lot = 10 FXRP
-const ERC20_BALANCE_ABI = [{ type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+// Vault instruction ids are TYPE-based (VaultType 1=Firelight, 2=Upshift). Deposit / withdraw differ per type.
+const depositInstr = (vaultType: number) => (vaultType === 1 ? 0x11 : 0x21);
+const withdrawInstr = (vaultType: number) => (vaultType === 1 ? 0x12 : 0x22); // Upshift 0x22 = requestRedeem
+
+/** One FXRP vault position from the FSA ReaderFacet. */
+type VaultBalance = { vaultId: bigint; vaultAddress: string; vaultType: number; shares: bigint; assets: bigint };
+type Portfolio = {
+  natBalance: bigint;
+  wNat: { token: string; balance: bigint };
+  fXrp: { token: string; balance: bigint };
+  vaults: readonly VaultBalance[];
+};
 
 /** Build the 32-byte FSA reference, mirroring FxrpRule / PaymentReferenceParser. */
 const fsaRef = (id: number, value: bigint, vaultId: number): `0x${string}` =>
@@ -575,23 +582,31 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [pa, setPa] = useState<string | null>(null);
   const [coreVault, setCoreVault] = useState("");
   const [notReady, setNotReady] = useState(false);
-  const [bal, setBal] = useState<bigint | null>(null);
+  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [mintAmt, setMintAmt] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [settling, setSettling] = useState(false); // an executor is completing a submitted action off-chain
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
-  const [deposit, setDeposit] = useState("");
-  const [withdraw, setWithdraw] = useState("");
+  const [depositAmt, setDepositAmt] = useState("");
+  const [selectedVaultId, setSelectedVaultId] = useState("");
+  const [withdrawAmts, setWithdrawAmts] = useState<Record<string, string>>({});
   const [home, setHome] = useState("");
 
-  const settleBaseline = useRef<bigint | null>(null); // balance snapshot when an action was submitted
+  // Whole FXRP portfolio, from one ReaderFacet.getBalances call.
+  const liquid = portfolio ? portfolio.fXrp.balance : null;
+  const vaultList = portfolio?.vaults ?? [];
+  const positions = vaultList.filter((v) => v.assets > 0n);
+  const inVaults = positions.reduce((s, v) => s + v.assets, 0n);
+  const total = (liquid ?? 0n) + inVaults;
+
+  const settleBaseline = useRef<bigint | null>(null); // liquid-FXRP snapshot when an action was submitted
 
   const readBalance = useCallback(async (account: string) => {
     try {
-      const b = await publicClient.readContract({ address: FXRP_TOKEN, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [account as `0x${string}`] }) as bigint;
-      setBal(b);
-      // The moment the balance actually moves, the pending action has landed on-chain — stop "settling".
-      if (settleBaseline.current !== null && b !== settleBaseline.current) {
+      const p = await publicClient.readContract({ address: ADDRESSES.fsaDiamond, abi: FSA_READER_ABI, functionName: "getBalances", args: [account as `0x${string}`] }) as Portfolio;
+      setPortfolio(p);
+      // The moment the liquid FXRP balance moves, the pending action has landed on-chain — stop "settling".
+      if (settleBaseline.current !== null && p.fXrp.balance !== settleBaseline.current) {
         settleBaseline.current = null;
         setSettling(false);
       }
@@ -638,10 +653,17 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // balance moves; the timeout is just a safety cap (mint via the FDC executor can take ~1–2 min).
   const settle = useCallback(() => {
     if (!pa) return;
-    settleBaseline.current = bal ?? 0n;
+    settleBaseline.current = liquid ?? 0n;
     setSettling(true);
     setTimeout(() => { settleBaseline.current = null; setSettling(false); }, 180_000);
-  }, [pa, bal]);
+  }, [pa, liquid]);
+
+  // Default the "put to work" vault to a Firelight vault (single-step withdraw) once the registry loads.
+  useEffect(() => {
+    if (selectedVaultId || vaultList.length === 0) return;
+    const fire = vaultList.find((v) => v.vaultType === 1);
+    setSelectedVaultId((fire ?? vaultList[0]).vaultId.toString());
+  }, [vaultList, selectedVaultId]);
 
   // Mint = pay the Core Vault a memo crediting THIS account's own FSA personal account (the rule recomputes
   // it and rejects any other target). We build the exact same memo the rule expects.
@@ -701,51 +723,35 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   };
 
   const uba = (fxrp: string) => BigInt(Math.round(Number(fxrp) * 1e6));
-  // FXRP amount rows: deposit / withdraw carry the UBA amount; redeem carries whole lots (10 FXRP each).
-  // Guard against spending more FXRP than the account actually holds — no point firing a trigger + fee for
-  // an action the executor can't complete. (Withdraw draws from the vault position, which FSA custodies
-  // internally and we can't read back yet, so it isn't hard-guarded here.)
+  // Every action is guarded against its real funding source — no firing a trigger + fee for something the
+  // executor can't complete. Deposit/redeem draw from liquid FXRP; withdraw draws from that vault's position.
   const runDeposit = () => {
-    const amt = uba(deposit);
+    const amt = uba(depositAmt);
     if (!(amt > 0n)) return setMsg({ tone: "error", text: "Enter an amount of FXRP." });
-    if (bal !== null && amt > bal) return setMsg({ tone: "error", text: `You only have ${fmtFxrp(bal)} FXRP available to put to work.` });
-    act("Deposit", fsaRef(0x11, amt, FIRELIGHT_VAULT));
+    if (liquid !== null && amt > liquid) return setMsg({ tone: "error", text: `You only have ${fmtFxrp(liquid)} FXRP liquid to put to work.` });
+    const v = vaultList.find((x) => x.vaultId.toString() === selectedVaultId);
+    if (!v) return setMsg({ tone: "error", text: "Pick a vault to deposit into." });
+    act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)));
   };
-  const runWithdraw = () => {
-    if (!(Number(withdraw) > 0)) return setMsg({ tone: "error", text: "Enter an amount of FXRP." });
-    act("Withdraw", fsaRef(0x12, uba(withdraw), FIRELIGHT_VAULT));
+  const runWithdraw = (v: VaultBalance) => {
+    const amt = uba(withdrawAmts[v.vaultId.toString()] ?? "");
+    if (!(amt > 0n)) return setMsg({ tone: "error", text: "Enter an amount of FXRP to withdraw." });
+    if (amt > v.assets) return setMsg({ tone: "error", text: `This vault holds ${fmtFxrp(v.assets)} FXRP — withdraw that or less.` });
+    act(`Withdraw-${v.vaultId}`, fsaRef(withdrawInstr(v.vaultType), amt, Number(v.vaultId)));
   };
   const runRedeem = () => {
     const lots = Math.floor(Number(home) / LOT_FXRP);
     if (!(lots >= 1)) return setMsg({ tone: "error", text: `Bringing home works in lots of ${LOT_FXRP} FXRP — enter at least ${LOT_FXRP}.` });
     const need = BigInt(lots) * BigInt(LOT_FXRP) * 1_000_000n;
-    if (bal !== null && need > bal) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(bal)} FXRP available.` });
+    if (liquid !== null && need > liquid) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(liquid)} FXRP liquid.` });
     act("Redeem", fsaRef(0x02, BigInt(lots), 0));
   };
-
-  const row = (
-    label: string, hint: string, value: string, set: (v: string) => void, onGo: () => void, cta: string, busyKey: string,
-  ) => (
-    <div className="rounded-xl border hairline bg-ink-900/60 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[14px] font-medium text-mist-100">{label}</p>
-          <p className="mt-0.5 text-[12px] text-mist-500">{hint}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <NumberInput value={value} onValueChange={set} decimal placeholder="0" className="w-24 text-right" />
-          <span className="text-[12px] text-mist-500">FXRP</span>
-          <Button variant="ghost" onClick={onGo} disabled={!!busy}>{busy === busyKey ? "…" : cta}</Button>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div className="space-y-4">
       <Notice tone="info">
-        The full round-trip, locked to your own account. Mint XRP into FXRP — it can only ever land in your own
-        Flare Smart Account. Then put it to work in Flare vaults and bring it home to XRPL. Sending FXRP to anyone
+        The full round-trip, locked to your own account. Mint XRP into FXRP, put it to work in Flare vaults,
+        and bring it home — every step lands in this account&rsquo;s own Flare account. Sending FXRP to anyone
         else is blocked on-chain.
       </Notice>
 
@@ -755,39 +761,108 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           created. No need to refresh.
         </Notice>
       ) : (
-        <Field
-          label="Your FXRP lands here — this account's own Flare account"
-          hint="A dedicated Flare Smart Account for this wallet — NOT your control / gas key. It's computed on-chain from the enclave key, so nothing (not even a stolen key) can repoint where your FXRP goes. Flare covers its gas; you never fund it."
-        >
-          <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{pa ?? "…"}</code>
-            {pa && <Copy text={pa} />}
+        <>
+          {/* Portfolio header */}
+          <div className="rounded-xl border border-signal-500/25 bg-gradient-to-b from-signal-500/[0.05] to-transparent p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[12px] text-mist-500">Your FXRP portfolio</p>
+                <p className="mt-0.5 font-mono text-2xl text-mist-100">{portfolio === null ? "…" : `${fmtFxrp(total)} FXRP`}</p>
+                {portfolio !== null && (
+                  <p className="mt-0.5 text-[12px] text-mist-500">
+                    <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)}</span> liquid · <span className="text-mist-300">{fmtFxrp(inVaults)}</span> earning in vaults
+                  </p>
+                )}
+              </div>
+              {settling && <span className="text-[12px] text-signal-400">⏳ updating (up to ~2 min)…</span>}
+            </div>
+            <div className="mt-3 flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+              <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-mist-300">{pa ?? "…"}</code>
+              {pa && <Copy text={pa} />}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-mist-500">
+              This account&rsquo;s own Flare Smart Account — <span className="text-mist-400">not your control / gas key.</span>{" "}
+              Computed on-chain from the enclave key, so nothing (not even a stolen key) can repoint where your FXRP goes. Flare covers its gas.
+            </p>
           </div>
-          <div className="mt-1.5 flex items-center gap-2 text-[12px]">
-            <span className="text-mist-500">FXRP balance:</span>
-            <span className="font-mono text-mist-200">{bal === null ? "…" : `${fmtFxrp(bal)} FXRP`}</span>
-            {settling && <span className="text-signal-400">· ⏳ landing on-chain (up to ~2 min)…</span>}
+
+          {/* ① Mint */}
+          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+            <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
+            <p className="mt-0.5 text-[12px] text-mist-500">
+              Turn XRP from this account into FXRP{coreVault ? <> (via the FAssets Core Vault <code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}. Lands in your Flare account above, ~1–2 min later.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
+              <span className="text-[13px] text-mist-500">XRP</span>
+              <Button onClick={mint} disabled={!pa || !!busy}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
+            </div>
           </div>
-        </Field>
+
+          {/* ② Put to work — vault selector */}
+          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+            <p className="text-[14px] font-medium text-mist-100">② 🌱 Put FXRP to work</p>
+            <p className="mt-0.5 text-[12px] text-mist-500">
+              Deposit liquid FXRP into a Flare yield vault. You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={selectedVaultId}
+                onChange={(e) => setSelectedVaultId(e.target.value)}
+                className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none transition-colors focus:border-signal-500/60"
+              >
+                {vaultList.length === 0 && <option value="">…</option>}
+                {vaultList.map((v) => (
+                  <option key={v.vaultId.toString()} value={v.vaultId.toString()}>
+                    {VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} · #{v.vaultId.toString()}
+                  </option>
+                ))}
+              </select>
+              <NumberInput value={depositAmt} onValueChange={setDepositAmt} decimal placeholder="0" className="w-24 text-right" />
+              <span className="text-[12px] text-mist-500">FXRP</span>
+              <Button variant="ghost" onClick={runDeposit} disabled={!!busy}>{busy === "Deposit" ? "…" : "Put to work"}</Button>
+            </div>
+          </div>
+
+          {/* Positions */}
+          {positions.length > 0 && (
+            <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+              <p className="text-[14px] font-medium text-mist-100">Your positions</p>
+              <div className="mt-3 space-y-3">
+                {positions.map((v) => {
+                  const key = v.vaultId.toString();
+                  return (
+                    <div key={key} className="flex flex-wrap items-center justify-between gap-2 border-t hairline pt-3 first:border-t-0 first:pt-0">
+                      <div className="min-w-0">
+                        <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} <span className="text-mist-500">· #{key}</span></p>
+                        <p className="text-[12px] text-mist-500">
+                          <span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> earning{v.vaultType === 2 ? " · redeem is a request + claim" : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <NumberInput value={withdrawAmts[key] ?? ""} onValueChange={(x) => setWithdrawAmts((m) => ({ ...m, [key]: x }))} decimal placeholder="0" className="w-24 text-right" />
+                        <span className="text-[12px] text-mist-500">FXRP</span>
+                        <Button variant="ghost" onClick={() => runWithdraw(v)} disabled={!!busy}>{busy === `Withdraw-${key}` ? "…" : "Withdraw"}</Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ③ Bring home */}
+          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+            <p className="text-[14px] font-medium text-mist-100">③ 🏠 Bring home to XRPL</p>
+            <p className="mt-0.5 text-[12px] text-mist-500">Redeem liquid FXRP back to XRP on this account (in lots of {LOT_FXRP} FXRP).</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
+              <span className="text-[12px] text-mist-500">FXRP</span>
+              <Button variant="ghost" onClick={runRedeem} disabled={!!busy}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
+            </div>
+          </div>
+        </>
       )}
-
-      {/* 1 · Mint */}
-      <div className="rounded-xl border hairline bg-ink-900/60 p-4">
-        <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
-        <p className="mt-0.5 text-[12px] text-mist-500">
-          Sends XRP from this account to mint FXRP{coreVault ? <> (via the FAssets Core Vault <code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}. It lands in your Flare account above — not your control key — about a minute or two later.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
-          <span className="text-[13px] text-mist-500">XRP</span>
-          <Button onClick={mint} disabled={!pa || !!busy}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
-        </div>
-      </div>
-
-      {/* 2 · Put to work / withdraw / bring home — all in FXRP */}
-      {row("② 🌱 Put FXRP to work", "Deposit into a Flare yield vault.", deposit, setDeposit, runDeposit, "Put to work", "Deposit")}
-      {row("↩︎ Withdraw", "Pull FXRP back out of the vault.", withdraw, setWithdraw, runWithdraw, "Withdraw", "Withdraw")}
-      {row("③ 🏠 Bring home to XRPL", `Redeem FXRP back to XRP on your account (in lots of ${LOT_FXRP} FXRP).`, home, setHome, runRedeem, "Bring home", "Redeem")}
 
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>
