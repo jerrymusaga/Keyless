@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Permissionless FXRP mint executor — FDC-attests a Keyless mint deposit and calls executeDirectMinting.",
   "scripts": {
-    "start": "node executor.mjs"
+    "start": "node executor.mjs watch",
+    "mint": "node executor.mjs"
   },
   "dependencies": {
     "viem": "^2.21.0"
