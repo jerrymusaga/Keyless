@@ -15,10 +15,26 @@ authorised and paid for.
 
 ```bash
 npm install
-node executor.mjs <xrpl-payment-tx-hash>
-# e.g. the test deposit awaiting execution:
+
+# one-off: complete a single mint by its XRPL tx hash
 node executor.mjs 7A40F6F3528A7491314129C76C88334A50DD36ED3AA4998689828993ECD3E1E4
+
+# always-on: watch every Keyless account and auto-complete mints as they land
+node executor.mjs watch
 ```
+
+**Watch mode** enumerates Keyless accounts from `KeylessAccounts` `WalletCreated` events → `xrplAddressOf`,
+polls each account's XRPL payments for Core-Vault deposits carrying the `DIRECT_MINTING` memo, and completes
+any it hasn't yet. On startup it records the existing backlog *without* minting (so it doesn't burn ~90s + a
+fee re-attesting already-minted history) and only completes **new** mints from then on — use the single-tx
+mode to backfill a specific past deposit. Idempotent: a deposit already minted (by us or a Flare bot) reverts
+`PaymentAlreadyConfirmed` and is skipped. Deploy it as an always-on worker (e.g. Railway) with `EXECUTOR_KEY`.
+
+### Why only mint? (deposit / redeem are already fast)
+Every FXRP action waits on the same ~90s FDC voting round — that floor is Flare protocol timing, not this
+script. The difference: **FSA vault deposit / redeem are auto-completed by Flare's own executor** (verified
+live — it serves all accounts, promptly), so they need nothing from us. **Direct minting is NOT relayed by
+Flare**, so without this watcher a mint waits for a random bot to notice. This closes that one gap.
 
 ## Config (env)
 
@@ -30,6 +46,7 @@ node executor.mjs 7A40F6F3528A7491314129C76C88334A50DD36ED3AA4998689828993ECD3E1
 | `DA_LAYER_URL` | Coston2 DA layer. Defaults to `https://ctn2-data-availability.flare.network`. |
 | `RPC_URL` | Coston2 C-chain RPC. Has a default. |
 | `ATTESTATION_TYPE` / `SOURCE_ID` / `VERIFIER_XRP_PATH` | Default `XRPPayment` / `testXRP` / `xrp`. Confirmed: fassets `DirectMintingFacet.executeDirectMinting(IXRPPayment.Proof)` → `TransactionAttestation.verifyXRPPayment` → `fdcVerification.verifyXRPPayment`, i.e. the dedicated **`XRPPayment`** type (`RequestBody = {transactionId, proofOwner}`), served at `verifier/xrp/XRPPayment/prepareRequest` — NOT the generic `Payment` (which wants `{transactionId, inUtxo, utxo}`). |
+| `KEYLESS_ACCOUNTS` / `XRPL_RPC` / `POLL_SECONDS` | **Watch mode.** KeylessAccounts manager (default `0x57eb…`), XRPL testnet JSON-RPC (default `s.altnet.rippletest.net:51234`), and loop interval (default 30s). |
 
 ## Flow (Flare's canonical FDC pattern)
 
