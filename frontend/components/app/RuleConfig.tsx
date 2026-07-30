@@ -598,12 +598,15 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [mintAmt, setMintAmt] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [settling, setSettling] = useState(false); // an executor is completing a submitted action off-chain
+  // A submitted action's staged progress: Submitted → Proving on Flare (~90s FDC round) → balance updated.
+  const [progress, setProgress] = useState<{ startedAt: number; done: boolean; label: string } | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
   const [depositAmt, setDepositAmt] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
   const [statusFor, setStatusFor] = useState<"mint" | "deposit" | "redeem" | null>(null); // which action the msg belongs to
+  const [, setTick] = useState(0); // 1s heartbeat to re-render the countdown while a step is in flight
+  const working = !!progress && !progress.done;
 
   // Whole FXRP portfolio, from one ReaderFacet.getBalances call.
   const liquid = portfolio ? portfolio.fXrp.balance : null;
@@ -618,10 +621,10 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     try {
       const p = await publicClient.readContract({ address: ADDRESSES.fsaDiamond, abi: FSA_READER_ABI, functionName: "getBalances", args: [account as `0x${string}`] }) as Portfolio;
       setPortfolio(p);
-      // The moment the liquid FXRP balance moves, the pending action has landed on-chain — stop "settling".
+      // The moment the liquid FXRP balance moves, the pending action has landed on-chain — mark it done.
       if (settleBaseline.current !== null && p.fXrp.balance !== settleBaseline.current) {
         settleBaseline.current = null;
-        setSettling(false);
+        setProgress((pr) => (pr ? { ...pr, done: true } : pr));
       }
     } catch { /* transient */ }
   }, []);
@@ -658,17 +661,24 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // refresh to see it. Polls a little faster while an action is settling.
   useEffect(() => {
     if (!pa) return;
-    const t = setInterval(() => readBalance(pa), settling ? 6000 : 15000);
+    const t = setInterval(() => readBalance(pa), working ? 5000 : 15000);
     return () => clearInterval(t);
-  }, [pa, settling, readBalance]);
+  }, [pa, working, readBalance]);
 
-  // Flag that we're waiting for a submitted action to land. The poll above clears it the instant the
-  // balance moves; the timeout is just a safety cap (mint via the FDC executor can take ~1–2 min).
-  const settle = useCallback(() => {
+  // 1s heartbeat so the "~Ns left" countdown re-renders while an action is in flight.
+  useEffect(() => {
+    if (!working) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [working]);
+
+  // Start a submitted action's staged progress. The balance poll marks it done the instant funds move;
+  // the timeout is a safety cap (the FDC round + executor can take ~1–2 min).
+  const settle = useCallback((label: string) => {
     if (!pa) return;
     settleBaseline.current = liquid ?? 0n;
-    setSettling(true);
-    setTimeout(() => { settleBaseline.current = null; setSettling(false); }, 180_000);
+    setProgress({ startedAt: Date.now(), done: false, label });
+    setTimeout(() => { settleBaseline.current = null; setProgress((p) => (p ? { ...p, done: true } : p)); }, 180_000);
   }, [pa, liquid]);
 
   // Default the "put to work" vault to a Firelight vault (single-step withdraw) once the registry loads.
@@ -706,8 +716,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
       const sent = mintAmt;
       setMintAmt("");
-      setMsg({ tone: "ok", text: `Sent ${sent} XRP to mint FXRP. It lands in your Flare account (shown above) in ~1–2 min — the balance updates on its own, no refresh needed.` });
-      settle();
+      settle(`Minting ${sent} XRP → FXRP`);
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
     } finally {
@@ -717,13 +726,12 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
 
   // value = FXRP amount in UBA (6 decimals). For redeem, FAssets works in whole lots of LOT_FXRP, so the
   // caller passes the lot count in `value` instead (see the redeem row).
-  const act = async (label: string, ref: `0x${string}`) => {
+  const act = async (label: string, ref: `0x${string}`, friendly: string) => {
     setBusy(label);
     setMsg(null);
     try {
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, FSA_WALLET, FSA_TRIGGER, ref], value: INIT_FEE });
-      setMsg({ tone: "info", text: `${label} submitted — Flare's executor completes it on-chain in a moment.` });
-      settle();
+      settle(friendly);
     } catch (e) {
       let reason = e instanceof Error ? e.message.split("\n")[0] : String(e);
       if (e instanceof BaseError) {
@@ -746,7 +754,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     if (liquid !== null && amt > liquid) return setMsg({ tone: "error", text: `You only have ${fmtFxrp(liquid)} FXRP liquid to put to work.` });
     const v = vaultList.find((x) => x.vaultId.toString() === selectedVaultId);
     if (!v) return setMsg({ tone: "error", text: "Pick a vault to deposit into." });
-    act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)));
+    act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)), `Putting ${depositAmt} FXRP to work`);
   };
   const runRedeem = () => {
     setStatusFor("redeem");
@@ -754,21 +762,46 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     if (!(lots >= 1)) return setMsg({ tone: "error", text: `Bringing home works in lots of ${LOT_FXRP} FXRP — enter at least ${LOT_FXRP}.` });
     const need = BigInt(lots) * BigInt(LOT_FXRP) * 1_000_000n;
     if (liquid !== null && need > liquid) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(liquid)} FXRP liquid.` });
-    act("Redeem", fsaRef(0x02, BigInt(lots), 0));
+    act("Redeem", fsaRef(0x02, BigInt(lots), 0), `Bringing ${lots * LOT_FXRP} FXRP home`);
   };
 
-  // Status shown INLINE right under whichever action was triggered — so the result + "still completing"
-  // spinner are visible where you clicked, no scrolling to the top or bottom of a long panel.
+  // A little staged tracker so the ~90s wait reads as progress, not a blank spinner. Shown INLINE under
+  // whichever action was triggered, so it's visible where you clicked — no scrolling a long panel.
+  const progressSteps = () => {
+    if (!progress) return null;
+    const elapsed = Math.floor((Date.now() - progress.startedAt) / 1000);
+    const remaining = Math.max(0, 90 - elapsed);
+    const done = progress.done;
+    const icon = (state: "done" | "active" | "todo") =>
+      state === "done" ? <span className="text-allow-500">✓</span>
+      : state === "active" ? <span className="inline-block size-3 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400 align-[-1px]" />
+      : <span className="inline-block size-1.5 rounded-full bg-ink-600" />;
+    const rows: [("done" | "active" | "todo"), string][] = [
+      ["done", "Submitted"],
+      [done ? "done" : "active", done ? "Proven on Flare" : remaining > 0 ? `Proving on Flare — ~${remaining}s left` : "Proving on Flare — finalizing…"],
+      [done ? "done" : "todo", done ? "FXRP balance updated" : "FXRP balance updates"],
+    ];
+    return (
+      <div className="mt-2 rounded-lg border hairline bg-ink-950/60 px-3 py-2.5">
+        <p className="mb-1.5 text-[12px] font-medium text-mist-200">{progress.label}{done ? " ✓" : "…"}</p>
+        <div className="space-y-1.5">
+          {rows.map(([state, label], i) => (
+            <div key={i} className="flex items-center gap-2 text-[12px]">
+              <span className="grid w-4 shrink-0 place-items-center">{icon(state)}</span>
+              <span className={state === "todo" ? "text-mist-500" : "text-mist-300"}>{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // Status shown INLINE right under whichever action was triggered.
   const actionStatus = (key: "mint" | "deposit" | "redeem") =>
     statusFor === key ? (
       <div className="mt-3 space-y-2">
         {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
-        {settling && (
-          <div className="flex items-center gap-2 text-[12px] text-signal-400">
-            <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
-            Completing on-chain — up to ~2 min. Your balance updates on its own.
-          </div>
-        )}
+        {progressSteps()}
       </div>
     ) : null;
 
@@ -797,7 +830,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   </p>
                 )}
               </div>
-              {settling && <span className="text-[12px] text-signal-400">⏳ updating (up to ~2 min)…</span>}
+              {working && <span className="text-[12px] text-signal-400">⏳ updating…</span>}
             </div>
             <div className="mt-3 flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
               <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-mist-300">{pa ?? "…"}</code>
