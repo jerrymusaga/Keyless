@@ -624,14 +624,14 @@ contract KeylessAccountsTest is Test {
         p.data.responseBody.abiEncodedData = data;
     }
 
-    function _conditionWallet(ConditionalRule rule, bytes32 reqHash, bytes32 expected)
+    function _conditionWallet(ConditionalRule rule, IWeb2Json.RequestBody memory req, bytes32 expected)
         internal
         returns (bytes32 id)
     {
         id = _wallet(alice, "conditional");
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, EXCHANGE, 10_000_000, reqHash, expected); // pay supplier up to 10 XRP on proof
+        rule.configure(id, EXCHANGE, 10_000_000, req, expected); // pay supplier up to 10 XRP on proof
         vm.stopPrank();
     }
 
@@ -639,7 +639,7 @@ contract KeylessAccountsTest is Test {
         MockFdcVerification fdc = new MockFdcVerification();
         rule = new ConditionalRule(address(accounts), address(fdc));
         req = _req(API_URL, "{\"ids\":\"ripple\"}", API_JQ);
-        id = _conditionWallet(rule, rule.requestHashOf(req), keccak256(abi.encode(true)));
+        id = _conditionWallet(rule, req, keccak256(abi.encode(true)));
     }
 
     function test_conditional_locksUntilProven_thenPays() public {
@@ -698,7 +698,7 @@ contract KeylessAccountsTest is Test {
         MockFdcVerification fdc = new MockFdcVerification();
         ConditionalRule rule = new ConditionalRule(address(accounts), address(fdc));
         IWeb2Json.RequestBody memory req = _req(API_URL, "{\"ids\":\"ripple\"}", API_JQ);
-        bytes32 id = _conditionWallet(rule, rule.requestHashOf(req), keccak256(abi.encode(true)));
+        bytes32 id = _conditionWallet(rule, req, keccak256(abi.encode(true)));
 
         fdc.setResult(false); // Flare did not attest this
         vm.expectRevert(ConditionalRule.ProofNotVerified.selector);

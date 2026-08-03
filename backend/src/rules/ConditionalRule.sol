@@ -54,8 +54,17 @@ contract ConditionalRule is KeylessRuleBase {
     /// @notice walletId => its condition.
     mapping(bytes32 => Condition) public conditionOf;
 
+    /// @dev Emits the FULL request, not just its hash, so the condition is self-describing on-chain:
+    ///      anyone can replay this event, rebuild the exact attestation request, and prove the condition.
+    ///      That is what keeps `release()` genuinely permissionless — a watcher needs no off-chain
+    ///      registry and no privileged knowledge of what a given account is waiting on.
     event ConditionConfigured(
-        bytes32 indexed walletId, string recipient, uint256 maxAmount, bytes32 requestHash, bytes32 expectedHash
+        bytes32 indexed walletId,
+        string recipient,
+        uint256 maxAmount,
+        bytes32 requestHash,
+        bytes32 expectedHash,
+        IWeb2Json.RequestBody request
     );
     event ConditionProven(bytes32 indexed walletId, uint64 votingRound);
     event ConditionCancelled(bytes32 indexed walletId);
@@ -77,7 +86,10 @@ contract ConditionalRule is KeylessRuleBase {
 
     /// @notice Set up the condition: who this account may pay, the total cap, the exact API request that
     ///         decides it, and the attested value that means "satisfied".
-    /// @param requestHash  From `requestHashOf(...)` — pins the API, its query and the jq transform.
+    /// @param request      The attestation request to pin — url, method, headers, query, body, the jq
+    ///                     transform and the abi signature. The contract hashes it itself, so a client can
+    ///                     never commit to an encoding the rule won't reproduce, and emits it in full so
+    ///                     the condition is self-describing on-chain.
     /// @param expectedHash keccak of the attested `abiEncodedData` meaning satisfied. For the usual
     ///                     jq-predicate shape (`{ok: (.status == "DELIVERED")}` → bool) that is
     ///                     `keccak(abi.encode(true))`; safe here only because the request is also pinned.
@@ -85,12 +97,13 @@ contract ConditionalRule is KeylessRuleBase {
         bytes32 walletId,
         string calldata recipient,
         uint256 maxAmount,
-        bytes32 requestHash,
+        IWeb2Json.RequestBody calldata request,
         bytes32 expectedHash
     ) external onlyWalletOwner(walletId) notLocked(walletId) {
         if (maxAmount == 0) revert Rejected("zero cap");
-        if (requestHash == bytes32(0)) revert Rejected("no request pinned");
+        if (bytes(request.url).length == 0) revert Rejected("no request pinned");
         if (expectedHash == bytes32(0)) revert Rejected("no condition");
+        bytes32 requestHash = requestHashOf(request);
         conditionOf[walletId] = Condition({
             recipient: keccak256(bytes(recipient)),
             maxAmount: maxAmount,
@@ -100,7 +113,7 @@ contract ConditionalRule is KeylessRuleBase {
             released: false,
             active: true
         });
-        emit ConditionConfigured(walletId, recipient, maxAmount, requestHash, expectedHash);
+        emit ConditionConfigured(walletId, recipient, maxAmount, requestHash, expectedHash, request);
     }
 
     /// @notice Prove the condition. Verifies the attestation against Flare's Merkle root for its voting

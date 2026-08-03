@@ -10,20 +10,27 @@
 // same value cannot release your condition. See ConditionalRule.sol for the attack this defends.
 //
 // Usage:
+//   node conditional.mjs watch                         # poll every conditional account, auto-prove when true
 //   node conditional.mjs check   <walletId>            # is the condition true right now? (no tx, no fee)
-//   node conditional.mjs release <walletId>            # attest + release on-chain
+//   node conditional.mjs release <walletId> [key args] # attest + release one account now
 //
-// The request is read FROM THE CHAIN-PINNED template you configured (see CONDITIONS below), so the
-// executor can never attest a different question than the one the account committed to.
+// WATCH MODE is the intended deployment: accounts don't wait for anyone to press a button. The watcher
+// replays `ConditionConfigured` events — which carry the FULL request, not just its hash — so it can
+// rebuild each account's exact pinned question, read the live API to see whether it's true yet, and only
+// then spend a fee on an attestation. Nothing privileged: the condition is self-describing on-chain, so
+// anyone can run this, and the rule's request-pinning means a watcher cannot prove the wrong question.
 //
-// Env: EXECUTOR_KEY (funded Coston2 key) · RPC_URL · CONDITIONAL_RULE · VERIFIER_URL / VERIFIER_API_KEY / DA_LAYER_URL
+// Env: EXECUTOR_KEY (funded Coston2 key) · RPC_URL · CONDITIONAL_RULE · VERIFIER_URL / VERIFIER_API_KEY /
+//      DA_LAYER_URL · COSTON2_EXPLORER_API · POLL_SECONDS (default 60)
 
-import { createPublicClient, createWalletClient, http, defineChain, decodeAbiParameters, encodeAbiParameters, pad, stringToHex, keccak256 } from "viem";
+import { createPublicClient, createWalletClient, http, defineChain, decodeAbiParameters, decodeEventLog, toEventSelector, pad, stringToHex, keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const RPC = process.env.RPC_URL || "https://coston2-api.flare.network/ext/C/rpc";
 const KEY = process.env.EXECUTOR_KEY;
-const RULE = process.env.CONDITIONAL_RULE || "0x72a2A4CC1F5c3a85Cae09958757EF331C4ebe5aF";
+const RULE = process.env.CONDITIONAL_RULE || "0xC96960e0ec98f0cf839E01B13922deb7E8edF2f2";
+const EXPLORER = process.env.COSTON2_EXPLORER_API || "https://coston2-explorer.flare.network/api";
+const POLL_MS = (Number(process.env.POLL_SECONDS) || 60) * 1000;
 const VERIFIER_URL = (process.env.VERIFIER_URL || "https://fdc-verifiers-testnet.flare.network").replace(/\/$/, "");
 const VERIFIER_API_KEY = process.env.VERIFIER_API_KEY || "00000000-0000-0000-0000-000000000000";
 const DA_LAYER_URL = (process.env.DA_LAYER_URL || "https://ctn2-data-availability.flare.network").replace(/\/$/, "");
@@ -92,6 +99,12 @@ const RULE_ABI = [
       { name: "expectedHash", type: "bytes32" }, { name: "spent", type: "uint256" }, { name: "released", type: "bool" }, { name: "active", type: "bool" }] },
   { type: "function", name: "release", stateMutability: "nonpayable",
     inputs: [{ name: "walletId", type: "bytes32" }, { name: "proof", type: "tuple", components: [{ name: "merkleProof", type: "bytes32[]" }, { name: "data", ...RESP_ABI }] }], outputs: [] },
+  // Carries the FULL request — this is what makes a watcher possible without any off-chain registry.
+  { type: "event", name: "ConditionConfigured", inputs: [
+    { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
+    { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
+    { name: "expectedHash", type: "bytes32" }, { name: "request", ...REQ_ABI },
+  ] },
 ];
 
 const t32 = (s) => pad(stringToHex(s), { dir: "right", size: 32 });
@@ -109,58 +122,33 @@ async function prepare(cond) {
   return j.abiEncodedRequest;
 }
 
-/** Read the live API exactly as the attestation would, so we can tell the user whether it's true yet. */
+/**
+ * What WOULD be attested right now — free, instant, no voting round. The verifier's `prepareResponse`
+ * runs the exact same fetch + jq + abi-encode the real attestation performs, so this is a faithful
+ * preview of the answer rather than a guess. Used to decide whether it's worth paying for an attestation
+ * at all, and to show a live "true / not yet" readout.
+ */
 async function peek(cond) {
-  const url = cond.queryParams && cond.queryParams !== "{}"
-    ? `${cond.url}?${new URLSearchParams(JSON.parse(cond.queryParams))}` : cond.url;
-  const r = await fetch(url, { headers: { "User-Agent": "keyless-conditional" } });
-  return r.json();
+  const res = await fetch(`${VERIFIER_URL}/verifier/web2/${ATT_TYPE}/prepareResponse`, {
+    method: "POST", headers: { "X-API-KEY": VERIFIER_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ attestationType: t32(ATT_TYPE), sourceId: t32(SOURCE_ID), requestBody: strip(cond) }),
+  });
+  const j = await res.json();
+  if (j.status !== "VALID") throw new Error(`verifier: ${j.status ?? "unknown"}`);
+  return j.response.responseBody.abiEncodedData;
 }
 
-async function main() {
-  const [mode, walletId, ...rest] = process.argv.slice(2);
-  if (!KEY) throw new Error("set EXECUTOR_KEY");
-  if (!mode || !walletId) throw new Error("usage: node conditional.mjs <check|release> <walletId> [conditionKey args…]");
-
-  // Which condition? Default to the price template; any template can be passed explicitly.
-  const key = rest[0] || "xrpPriceAbove";
-  const args = rest.slice(1).length ? rest.slice(1) : [1];
-  const cond = CONDITIONS[key](...args);
-
-  const account = privateKeyToAccount(KEY.startsWith("0x") ? KEY : `0x${KEY}`);
-  const pub = createPublicClient({ chain: coston2, transport: http(RPC) });
-  const wallet = createWalletClient({ account, chain: coston2, transport: http(RPC) });
-
-  console.log(`condition: ${cond.label}`);
-
-  // The rule must already be pinned to THIS request, or the release can't succeed. Check before spending.
-  const onchain = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [walletId] });
-  const [, maxAmount, requestHash, expectedHash, , released, active] = onchain;
-  if (!active) throw new Error("no active condition on this account");
-  if (released) { console.log("already proven — the account can pay its payee."); return; }
-  const ours = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "requestHashOf", args: [strip(cond)] });
-  if (ours.toLowerCase() !== requestHash.toLowerCase()) {
-    throw new Error(`this account pinned a different request (${requestHash}); refusing to attest the wrong question`);
-  }
-
-  if (mode === "check") {
-    console.log("live API says:", JSON.stringify(await peek(cond)));
-    console.log(`cap ${maxAmount} drops · expects ${expectedHash}`);
-    return;
-  }
-
-  // 1) validate + encode the attestation request
-  console.log("[1/5] verifier prepareRequest…");
+/** Prove one account's condition: attest its pinned request via FDC, then release() on-chain. */
+async function proveAndRelease(pub, wallet, walletId, cond, expectedHash, log = console.log) {
+  log("[1/5] verifier prepareRequest…");
   const abiEncodedRequest = await prepare(cond);
 
-  // 2) submit it to the FDC
   const fee = await pub.readContract({ address: ADDR.fee, abi: [{ type: "function", name: "getRequestFee", stateMutability: "view", inputs: [{ type: "bytes" }], outputs: [{ type: "uint256" }] }], functionName: "getRequestFee", args: [abiEncodedRequest] });
-  console.log(`[2/5] FdcHub.requestAttestation (fee ${fee} wei)…`);
+  log(`[2/5] FdcHub.requestAttestation (fee ${fee} wei)…`);
   const h = await wallet.writeContract({ address: ADDR.fdcHub, abi: [{ type: "function", name: "requestAttestation", stateMutability: "payable", inputs: [{ type: "bytes" }], outputs: [] }], functionName: "requestAttestation", args: [abiEncodedRequest], value: fee });
   const rcpt = await pub.waitForTransactionReceipt({ hash: h });
   const blk = await pub.getBlock({ blockNumber: rcpt.blockNumber });
 
-  // 3) wait for the voting round to finalise
   const FSM = [{ type: "function", name: "firstVotingRoundStartTs", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] }, { type: "function", name: "votingEpochDurationSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] }];
   const [first, dur] = await Promise.all([
     pub.readContract({ address: ADDR.fsm, abi: FSM, functionName: "firstVotingRoundStartTs" }),
@@ -168,11 +156,10 @@ async function main() {
   ]);
   const round = Number((BigInt(blk.timestamp) - BigInt(first)) / BigInt(dur));
   const pid = await pub.readContract({ address: ADDR.fdcVerification, abi: [{ type: "function", name: "fdcProtocolId", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] }], functionName: "fdcProtocolId" });
-  console.log(`[3/5] round ${round}; waiting for finalisation…`);
+  log(`[3/5] round ${round}; waiting for finalisation…`);
   while (!(await pub.readContract({ address: ADDR.relay, abi: [{ type: "function", name: "isFinalized", stateMutability: "view", inputs: [{ type: "uint256" }, { type: "uint256" }], outputs: [{ type: "bool" }] }], functionName: "isFinalized", args: [BigInt(pid), BigInt(round)] }))) await sleep(15000);
 
-  // 4) the Merkle proof
-  console.log("[4/5] fetching proof from the DA layer…");
+  log("[4/5] fetching proof from the DA layer…");
   let da;
   for (let i = 0; i < 40; i++) {
     const r = await fetch(`${DA_LAYER_URL}/api/v1/fdc/proof-by-request-round-raw`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ votingRoundId: round, requestBytes: abiEncodedRequest }) });
@@ -183,18 +170,108 @@ async function main() {
   if (!da?.response_hex) throw new Error("DA layer never returned a proof");
   const [data] = decodeAbiParameters([RESP_ABI], da.response_hex);
   const attested = data.responseBody.abiEncodedData;
-  console.log(`   attested: ${attested}  (keccak ${keccak256(attested)})`);
-  if (keccak256(attested) !== expectedHash) {
-    console.log("→ the world has NOT met the condition yet. Nothing released; the account still cannot pay.");
+  log(`   attested: ${attested}`);
+  if (keccak256(attested) !== expectedHash.toLowerCase()) {
+    log("→ the world has NOT met the condition yet. Nothing released.");
+    return null;
+  }
+
+  log("[5/5] ConditionalRule.release…");
+  const tx = await wallet.writeContract({ address: RULE, abi: RULE_ABI, functionName: "release", args: [walletId, { merkleProof: da.proof, data }] });
+  await pub.waitForTransactionReceipt({ hash: tx });
+  return tx;
+}
+
+const CONFIGURED_TOPIC = toEventSelector(RULE_ABI.find((f) => f.type === "event" && f.name === "ConditionConfigured"));
+
+/** Every configured condition, rebuilt from ConditionConfigured events (which carry the full request). */
+async function configuredConditions() {
+  const url = `${EXPLORER}?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${RULE}&topic0=${CONFIGURED_TOPIC}`;
+  const j = await (await fetch(url, { cache: "no-store" })).json();
+  const logs = Array.isArray(j.result) ? j.result : [];
+  const out = new Map(); // walletId -> latest config
+  for (const l of logs) {
+    try {
+      const d = decodeEventLog({ abi: RULE_ABI, data: l.data, topics: l.topics });
+      out.set(d.args.walletId, { walletId: d.args.walletId, request: d.args.request, expectedHash: d.args.expectedHash });
+    } catch { /* skip undecodable */ }
+  }
+  return [...out.values()];
+}
+
+/** Is the condition satisfied right now? Free — so the watcher only pays a fee when it will actually pass. */
+async function isTrueNow(request, expectedHash) {
+  try {
+    const attested = await peek(request);
+    return { ok: keccak256(attested) === expectedHash.toLowerCase(), attested };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function watch(pub, wallet) {
+  console.log(`[watch] polling conditional accounts every ${POLL_MS / 1000}s…`);
+  const inFlight = new Set();
+  for (;;) {
+    try {
+      const configs = await configuredConditions();
+      for (const c of configs) {
+        if (inFlight.has(c.walletId)) continue;
+        const [, , , expectedHash, , released, active] = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [c.walletId] });
+        if (!active || released) continue;
+        // Attesting costs a fee and ~90s, so preview the answer first (free) and only prove when it passes.
+        const live = await isTrueNow(c.request, expectedHash);
+        if (!live.ok) continue; // not true yet (or unreachable) — check again next tick
+        inFlight.add(c.walletId);
+        console.log(`[watch] ${c.walletId.slice(0, 10)}… condition is TRUE, proving (${c.request.url})`);
+        proveAndRelease(pub, wallet, c.walletId, c.request, expectedHash, (m) => console.log(`   ${m}`))
+          .then((tx) => console.log(tx ? `[watch] ✓ released ${c.walletId.slice(0, 10)}… -> ${tx}` : `[watch] not true yet: ${c.walletId.slice(0, 10)}…`))
+          .catch((e) => console.error(`[watch] ${c.walletId.slice(0, 10)}… failed: ${e.message || e}`))
+          .finally(() => inFlight.delete(c.walletId));
+      }
+    } catch (e) {
+      console.error("[watch] loop error:", e.message || e);
+    }
+    await sleep(POLL_MS);
+  }
+}
+
+async function main() {
+  const [mode, walletId, ...rest] = process.argv.slice(2);
+  if (!KEY) throw new Error("set EXECUTOR_KEY");
+  const account = privateKeyToAccount(KEY.startsWith("0x") ? KEY : `0x${KEY}`);
+  const pub = createPublicClient({ chain: coston2, transport: http(RPC) });
+  const wallet = createWalletClient({ account, chain: coston2, transport: http(RPC) });
+
+  if (mode === "watch") return watch(pub, wallet);
+  if (!mode || !walletId) throw new Error("usage: node conditional.mjs <watch|check|release> [walletId] [conditionKey args…]");
+
+  const key = rest[0] || "xrpPriceAbove";
+  const args = rest.slice(1).length ? rest.slice(1) : [1];
+  const cond = CONDITIONS[key](...args);
+  console.log(`condition: ${cond.label}`);
+
+  const [, maxAmount, requestHash, expectedHash, , released, active] =
+    await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [walletId] });
+  if (!active) throw new Error("no active condition on this account");
+  if (released) { console.log("already proven — the account can pay its payee."); return; }
+  const ours = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "requestHashOf", args: [strip(cond)] });
+  if (ours.toLowerCase() !== requestHash.toLowerCase()) {
+    throw new Error(`this account pinned a different request (${requestHash}); refusing to attest the wrong question`);
+  }
+
+  if (mode === "check") {
+    const live = await isTrueNow(strip(cond), expectedHash);
+    console.log(`right now: ${live.ok ? "TRUE — ready to prove" : "not true yet"}${live.attested ? ` (attested ${live.attested})` : ""}`);
+    console.log(`cap ${maxAmount} drops`);
     return;
   }
 
-  // 5) release on-chain
-  console.log("[5/5] ConditionalRule.release…");
-  const tx = await wallet.writeContract({ address: RULE, abi: RULE_ABI, functionName: "release", args: [walletId, { merkleProof: da.proof, data }] });
-  await pub.waitForTransactionReceipt({ hash: tx });
-  console.log(`✓ condition proven on-chain. release tx: ${tx}`);
-  console.log("  the account may now pay its pinned payee, up to its cap.");
+  const tx = await proveAndRelease(pub, wallet, walletId, strip(cond), expectedHash);
+  if (tx) {
+    console.log(`✓ condition proven on-chain. release tx: ${tx}`);
+    console.log("  the account may now pay its pinned payee, up to its cap.");
+  }
 }
 
 main().catch((e) => { console.error("failed:", e.message || e); process.exit(1); });

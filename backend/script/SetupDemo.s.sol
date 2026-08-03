@@ -63,7 +63,7 @@ contract SetupDemo is Script {
 
         bytes32 wCond = accounts.createWallet{value: initFee}(bytes32("demo-conditional"));
         accounts.setRule(wCond, address(conditional));
-        conditional.configure(wCond, EXCHANGE, 100_000_000, conditional.requestHashOf(req), keccak256(abi.encode(true)));
+        conditional.configure(wCond, EXCHANGE, 100_000_000, req, keccak256(abi.encode(true)));
 
         vm.stopBroadcast();
 
