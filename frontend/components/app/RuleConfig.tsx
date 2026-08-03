@@ -6,7 +6,7 @@ import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
-import { ADDRESSES, ACCOUNTS_ABI, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
 /** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
 const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
@@ -44,7 +44,7 @@ export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; rul
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
   if (ruleKey === "fxrp") return <FxrpConfig walletId={walletId} />;
-  return <EscrowConfig walletId={walletId} />;
+  return <ConditionalConfig walletId={walletId} />;
 }
 
 type SavedRecipient = { address: string; requireTag: boolean; tag: number };
@@ -938,58 +938,113 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   );
 }
 
-function EscrowConfig({ walletId }: { walletId: `0x${string}` }) {
+/**
+ * Conditional: the account can't pay until something in the real world is proven true. The user picks a
+ * condition template and fills in one value; the request that decides it is pinned on-chain, and Flare's
+ * Data Connector is what flips the gate. A live readout shows what the world says *right now* (free — the
+ * verifier previews the exact answer it would attest), so the wait is legible rather than mysterious.
+ */
+function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [recipient, setRecipient] = useState("");
   const [cap, setCap] = useState("");
-  const [condition, setCondition] = useState("");
-  const [escrow, setEscrow] = useState<{ recipient: string; maxAmount: string; conditionHash: string; released: boolean } | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [kind, setKind] = useState<ConditionKey>("xrpPrice");
+  const [value, setValue] = useState("");
+  const [live, setLive] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [onchain, setOnchain] = useState<{ maxAmount: bigint; released: boolean; active: boolean } | null>(null);
   const { busy, msg, run } = useConfigAction();
+  const tpl = CONDITION_TEMPLATES[kind];
 
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/api/rule-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rule: "escrow", walletId }), cache: "no-store" });
-        const body = await res.json().catch(() => ({}));
-        if (!stop) setEscrow(body.escrow ?? null);
-      } catch { /* keep last */ }
-    };
-    load();
-    const t = refreshKey > 0 ? setTimeout(load, 4500) : undefined;
-    return () => { stop = true; if (t) clearTimeout(t); };
-  }, [walletId, refreshKey]);
+  const load = useCallback(async () => {
+    try {
+      const c = await publicClient.readContract({ address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never, functionName: "conditionOf", args: [walletId] }) as readonly [string, bigint, string, string, bigint, boolean, boolean];
+      setOnchain({ maxAmount: c[1], released: c[5], active: c[6] });
+    } catch { /* transient */ }
+  }, [walletId]);
+  useEffect(() => { load(); }, [load]);
+
+  // Ask the verifier what it would attest for the condition being composed — free, and the same
+  // fetch + transform the real attestation runs, so it's a faithful preview and not a guess.
+  const checkNow = async () => {
+    if (!value.trim()) return;
+    setChecking(true);
+    setLive(null);
+    try {
+      const res = await fetch("/api/condition", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request: tpl.build(value.trim()) }),
+      });
+      const b = await res.json();
+      setLive(res.ok ? { ok: !!b.ok } : { ok: false, error: b.error ?? "couldn't reach the API" });
+    } catch (e) {
+      setLive({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const configure = async () => {
     let drops: bigint;
     try {
       assertXrpl(recipient);
       drops = xrpToDrops(cap);
-      if (!condition.trim()) throw new Error("describe the release condition");
+      if (!value.trim()) throw new Error("fill in the condition");
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
-    const conditionHash = keccak256(toBytes(condition.trim()));
-    const ok = await run(RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure", [walletId, recipient.trim(), drops, conditionHash], "Set. Funds unlock only once the condition is proven on-chain.");
-    if (ok) { setRecipient(""); setCap(""); setCondition(""); setRefreshKey((k) => k + 1); signalConfigChanged(); }
+    const ok = await run(
+      RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure",
+      [walletId, recipient.trim(), drops, tpl.build(value.trim()), EXPECTED_TRUE],
+      `Set. This account can't pay until ${tpl.describe(value.trim())} — proven on-chain by Flare.`,
+    );
+    if (ok) { load(); signalConfigChanged(); }
   };
+
   return (
     <div className="space-y-4">
-      {escrow && (
-        <Notice tone="ok">
-          Escrow set: up to <span className="text-mist-100">{formatDrops(BigInt(escrow.maxAmount))}</span> to{" "}
-          <span className="font-mono text-mist-200">{addr(escrow.recipient)}</span> —{" "}
-          {escrow.released ? "condition proven, released ✓" : "locked until the condition is FDC-attested"}.
+      {onchain?.active && (
+        <Notice tone={onchain.released ? "ok" : "info"}>
+          {onchain.released ? (
+            <><span className="font-medium">Proven ✓</span> — the condition was met and attested on-chain. This account can now pay its payee, up to {formatDrops(onchain.maxAmount)}.</>
+          ) : (
+            <><span className="font-medium">Waiting on proof.</span> This account can&rsquo;t pay anyone until Flare attests the condition. It unlocks on its own when the world says yes.</>
+          )}
         </Notice>
       )}
-      <Notice tone="info">
-        Funds stay locked until Flare&rsquo;s Data Connector proves the condition. (Submitting the proof is an advanced step, done outside this form.)
-      </Notice>
+
       <Field label="Pay who?"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
-      <Field label="Up to how much?"><NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" /></Field>
-      <Field label="Only pay once this is true" hint="Hashed on-chain. Unlocks when Flare's Data Connector proves it.">
-        <Input value={condition} onChange={(e) => setCondition(e.target.value)} placeholder="delivery == true" />
+      <Field label="Up to how much?">
+        <div className="flex items-center gap-2">
+          <NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" className="w-28" />
+          <span className="text-[13px] text-mist-500">XRP</span>
+        </div>
       </Field>
+
+      <Field label="Only pay once this is true" hint="Flare's Data Connector checks this live API and proves the answer on-chain. Nothing can pay before it does.">
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={kind}
+            onChange={(e) => { setKind(e.target.value as ConditionKey); setValue(""); setLive(null); }}
+            className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none transition-colors focus:border-signal-500/60"
+          >
+            {(Object.keys(CONDITION_TEMPLATES) as ConditionKey[]).map((k) => (
+              <option key={k} value={k}>{CONDITION_TEMPLATES[k].name}</option>
+            ))}
+          </select>
+          <Input value={value} onChange={(e) => { setValue(e.target.value); setLive(null); }} placeholder={tpl.placeholder} className="w-56" />
+          <span className="self-center text-[12px] text-mist-500">{tpl.unit}</span>
+          <Button variant="ghost" onClick={checkNow} disabled={checking || !value.trim()}>{checking ? "Checking…" : "Check now"}</Button>
+        </div>
+      </Field>
+
+      {live && (
+        <Notice tone={live.error ? "warn" : live.ok ? "ok" : "info"}>
+          {live.error ? `Couldn't check: ${live.error}`
+            : live.ok ? <>Right now that&rsquo;s <span className="font-medium">true</span> — once saved, this will prove and unlock shortly.</>
+            : <>Right now that&rsquo;s <span className="font-medium">not true yet</span>. You can still save it — the account stays locked and unlocks by itself when it becomes true.</>}
+        </Notice>
+      )}
+
       <Button onClick={configure} disabled={busy}>{busy ? "…" : "Save"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}
     </div>

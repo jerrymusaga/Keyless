@@ -33,17 +33,45 @@ const E = {
     { name: "walletId", type: "bytes32", indexed: true }, { name: "mode", type: "uint8" }, { name: "cap", type: "uint256" },
     { name: "param", type: "uint256" }, { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" },
   ] } as AbiEvent,
-  escrowConfigured: { type: "event", name: "EscrowConfigured", inputs: [
+  // ConditionalRule. ConditionConfigured carries the FULL pinned request, so the UI can describe the
+  // condition in words without any off-chain registry.
+  escrowConfigured: { type: "event", name: "ConditionConfigured", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
-    { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" },
+    { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
+    { name: "expectedHash", type: "bytes32" },
+    { name: "request", type: "tuple", components: [
+      { name: "url", type: "string" }, { name: "httpMethod", type: "string" }, { name: "headers", type: "string" },
+      { name: "queryParams", type: "string" }, { name: "body", type: "string" },
+      { name: "postProcessJq", type: "string" }, { name: "abiSignature", type: "string" },
+    ] },
   ] } as AbiEvent,
-  escrowCancelled: { type: "event", name: "EscrowCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
-  escrowReleased: { type: "event", name: "EscrowReleased", inputs: [
+  escrowCancelled: { type: "event", name: "ConditionCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
+  escrowReleased: { type: "event", name: "ConditionProven", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "votingRound", type: "uint64" },
   ] } as AbiEvent,
 };
 
 type Tagged = { ev: AbiEvent; block: bigint; index: bigint; args: Record<string, unknown> };
+
+/**
+ * Turn a pinned attestation request back into a phrase a person can read ("XRP is worth at least $1").
+ * The request is on-chain in full, so this is a faithful description of what the account is waiting on —
+ * derived from the commitment itself, not from anything we store off-chain.
+ */
+function describeCondition(request?: { url?: string; postProcessJq?: string }): string | undefined {
+  const url = request?.url ?? "";
+  const jq = request?.postProcessJq ?? "";
+  if (!url) return undefined;
+  const price = jq.match(/\.ripple\.usd\s*>=\s*([\d.]+)/);
+  if (price) return `XRP is worth at least $${price[1]}`;
+  const gh = url.match(/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)/);
+  if (gh) return `${gh[1]}#${gh[3]} is ${gh[2] === "pulls" ? "merged" : "closed"}`;
+  try {
+    return `${new URL(url).hostname} reports it`;
+  } catch {
+    return "the pinned condition";
+  }
+}
 
 async function getLogs(rule: RuleKey, ev: AbiEvent, walletId: string): Promise<Tagged[]> {
   const url = `${EXPLORER}?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${RULES[rule]}&topic0=${toEventSelector(ev)}&topic1=${walletId}&topic0_1_opr=and`;
@@ -93,13 +121,19 @@ export async function POST(req: Request) {
       return Response.json({ recipients, capDrops, limit });
     }
 
-    // escrow
+    // conditional
     const events = await replay(rule, [E.escrowConfigured, E.escrowCancelled, E.escrowReleased], walletId);
-    let escrow: { recipient: string; maxAmount: string; conditionHash: string; released: boolean } | null = null;
+    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string } | null = null;
     for (const e of events) {
-      if (e.ev.name === "EscrowConfigured") escrow = { recipient: String(e.args.recipient), maxAmount: String(e.args.maxAmount), conditionHash: String(e.args.conditionHash), released: false };
-      else if (e.ev.name === "EscrowReleased") { if (escrow) escrow.released = true; }
-      else escrow = null; // EscrowCancelled
+      if (e.ev.name === "ConditionConfigured") {
+        escrow = {
+          recipient: String(e.args.recipient),
+          maxAmount: String(e.args.maxAmount),
+          released: false,
+          condition: describeCondition(e.args.request as { url?: string; postProcessJq?: string } | undefined),
+        };
+      } else if (e.ev.name === "ConditionProven") { if (escrow) escrow.released = true; }
+      else escrow = null; // ConditionCancelled
     }
     return Response.json({ escrow });
   } catch (e) {

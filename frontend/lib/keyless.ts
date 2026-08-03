@@ -86,7 +86,12 @@ export const FSA_READER_ABI = [
 export const RULES = {
   exchange: "0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4",
   rateLimit: "0x51Cc5c71350d527fDaA188B39f28DE22F4873710", // v3: rolling | calendar-aligned | until-a-date, + optional allowlist + per-tx cap
-  escrow: "0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7",
+  // Pay only once Flare's Data Connector proves a real-world condition. Supersedes the old
+  // FdcEscrowRule (0x6ef53Ce1…), which could never release (it called a function the live
+  // FdcVerification doesn't have) and, worse, could be released by ANYONE with an attestation of any
+  // API returning the same value — it bound only the response, not the request. This one pins the whole
+  // request. See backend/src/rules/ConditionalRule.sol.
+  escrow: "0xC96960e0ec98f0cf839E01B13922deb7E8edF2f2",
   // Unified FXRP round-trip: mint XRP->FXRP to your OWN Flare Smart Account (computed on-chain, not
   // configurable), then vault ops + redeem-home; transferring FXRP out is blocked. Supersedes the two
   // separate fxrpMint (0xaa0405f9…) + fxrpDefi (0xB5Ab70B4…) rules — see LEGACY_RULE_NAMES.
@@ -328,9 +333,23 @@ export const RULE_ABIS = {
     { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "mode", type: "uint8" }, { name: "cap", type: "uint256" }, { name: "param", type: "uint256" }, { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" }], outputs: [] },
   ],
+  // ConditionalRule. `configure` takes the FULL attestation request — the contract hashes it, so the
+  // client can't commit to an encoding the rule won't reproduce — and the expected attested value.
   escrow: [
-    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" }, { name: "conditionHash", type: "bytes32" }], outputs: [] },
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [
+      { name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }, { name: "maxAmount", type: "uint256" },
+      { name: "request", type: "tuple", components: [
+        { name: "url", type: "string" }, { name: "httpMethod", type: "string" }, { name: "headers", type: "string" },
+        { name: "queryParams", type: "string" }, { name: "body", type: "string" },
+        { name: "postProcessJq", type: "string" }, { name: "abiSignature", type: "string" },
+      ] },
+      { name: "expectedHash", type: "bytes32" },
+    ], outputs: [] },
     { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
+    { type: "function", name: "conditionOf", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [
+      { name: "recipient", type: "bytes32" }, { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
+      { name: "expectedHash", type: "bytes32" }, { name: "spent", type: "uint256" }, { name: "released", type: "bool" }, { name: "active", type: "bool" },
+    ] },
   ],
   // Unified FXRP: mint half (mint into your own on-chain-computed FSA personal account) + DeFi half
   // (vault ops + redeem-home). `personalAccountOf` is the only mint target — nothing to configure.
@@ -343,6 +362,69 @@ export const RULE_ABIS = {
     { type: "function", name: "vaultRef", stateMutability: "pure", inputs: [{ name: "id", type: "uint8" }, { name: "vaultId", type: "uint16" }, { name: "value", type: "uint80" }], outputs: [{ type: "bytes32" }] },
   ],
 } as const;
+
+/**
+ * Conditions a Conditional account can wait on. Each is a REAL public API the Flare Data Connector can
+ * attest. The jq transform carries the predicate, so the attested answer is a plain boolean — which is
+ * why every condition commits to the same expected value (`keccak(abi.encode(true))`). That is only safe
+ * because ConditionalRule also pins the whole request; see the rule for the attack it defends.
+ */
+export const EXPECTED_TRUE = "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6" as const;
+const BOOL_SIG = '{"components":[{"internalType":"bool","name":"ok","type":"bool"}],"name":"task","type":"tuple"}';
+
+export type ConditionRequest = {
+  url: string; httpMethod: string; headers: string; queryParams: string;
+  body: string; postProcessJq: string; abiSignature: string;
+};
+
+export const CONDITION_TEMPLATES = {
+  xrpPrice: {
+    name: "XRP price reaches",
+    unit: "USD",
+    placeholder: "1",
+    describe: (v: string) => `XRP is worth at least $${v}`,
+    // NB the query MUST go in queryParams, not the url — the verifier can't fetch it inline.
+    build: (v: string): ConditionRequest => ({
+      url: "https://api.coingecko.com/api/v3/simple/price",
+      httpMethod: "GET", headers: "{}",
+      queryParams: JSON.stringify({ ids: "ripple", vs_currencies: "usd" }),
+      body: "{}",
+      postProcessJq: `{ok: (.ripple.usd >= ${Number(v)})}`,
+      abiSignature: BOOL_SIG,
+    }),
+  },
+  githubIssueClosed: {
+    name: "A GitHub issue is closed",
+    unit: "owner/repo#number",
+    placeholder: "flare-foundation/fassets#1",
+    describe: (v: string) => `${v} is closed`,
+    build: (v: string): ConditionRequest => {
+      const [repo, num] = v.split("#");
+      return {
+        url: `https://api.github.com/repos/${repo}/issues/${num}`,
+        httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+        postProcessJq: '{ok: (.state == "closed")}',
+        abiSignature: BOOL_SIG,
+      };
+    },
+  },
+  githubPrMerged: {
+    name: "A GitHub pull request is merged",
+    unit: "owner/repo#number",
+    placeholder: "flare-foundation/fassets#1",
+    describe: (v: string) => `${v} is merged`,
+    build: (v: string): ConditionRequest => {
+      const [repo, num] = v.split("#");
+      return {
+        url: `https://api.github.com/repos/${repo}/pulls/${num}`,
+        httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+        postProcessJq: "{ok: (.merged == true)}",
+        abiSignature: BOOL_SIG,
+      };
+    },
+  },
+} as const;
+export type ConditionKey = keyof typeof CONDITION_TEMPLATES;
 
 /** UI-facing metadata for each rule template: which address, the human story, and its adversary. */
 export type RuleKey = keyof typeof RULES;
@@ -363,12 +445,11 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
     address: RULES.rateLimit,
   },
   escrow: {
-    name: "Conditional (FDC)",
-    tagline: "Pay only once Flare proves the condition is met.",
-    useFor: "Escrow, milestone or pay-on-delivery payments.",
-    protects: "Funds stay locked until delivery is proven on-chain.",
+    name: "Conditional",
+    tagline: "Pay only once something in the real world is proven true.",
+    useFor: "Escrow, milestone payments, pay-on-delivery, price triggers.",
+    protects: "Funds stay locked until the world proves it — no early release, no wrong payee.",
     address: RULES.escrow,
-    comingSoon: true,
   },
   fxrp: {
     name: "FXRP on Flare",
