@@ -965,23 +965,28 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
 
   // Ask the verifier what it would attest for the condition being composed — free, and the same
   // fetch + transform the real attestation runs, so it's a faithful preview and not a guess.
-  const checkNow = async () => {
-    if (!value.trim()) return;
+  const check = useCallback(async (v: string) => {
+    const res = await fetch("/api/condition", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ request: tpl.build(v) }),
+    });
+    const b = await res.json();
+    return res.ok ? { ok: !!b.ok } : { ok: false, error: b.error ?? "couldn't reach that API" };
+  }, [tpl]);
+
+  // Check as they type (debounced) so the readout is just *there* — nobody should have to know to press
+  // a button to avoid locking funds against a condition that can never resolve.
+  useEffect(() => {
+    const v = value.trim();
+    if (!v) { setLive(null); return; }
     setChecking(true);
-    setLive(null);
-    try {
-      const res = await fetch("/api/condition", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ request: tpl.build(value.trim()) }),
-      });
-      const b = await res.json();
-      setLive(res.ok ? { ok: !!b.ok } : { ok: false, error: b.error ?? "couldn't reach the API" });
-    } catch (e) {
-      setLive({ ok: false, error: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setChecking(false);
-    }
-  };
+    const t = setTimeout(async () => {
+      try { setLive(await check(v)); }
+      catch (e) { setLive({ ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      finally { setChecking(false); }
+    }, 700);
+    return () => { clearTimeout(t); setChecking(false); };
+  }, [value, check]);
 
   const configure = async () => {
     let drops: bigint;
@@ -991,6 +996,18 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
       if (!value.trim()) throw new Error("fill in the condition");
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
+    }
+    // Never let someone lock funds against a condition that can't be read — that would strand the account
+    // with no way to ever unlock it. A condition that's merely *false* is fine: that's the whole point.
+    try {
+      const v = await check(value.trim());
+      if (v.error) {
+        setLive(v);
+        return alert(`That condition can't be read: ${v.error}\n\nCheck the details — saving it would lock this account against something that can never be proven.`);
+      }
+      setLive(v);
+    } catch {
+      return alert("Couldn't verify that condition just now. Try again in a moment.");
     }
     const ok = await run(
       RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure",
@@ -1031,17 +1048,17 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
               <option key={k} value={k}>{CONDITION_TEMPLATES[k].name}</option>
             ))}
           </select>
-          <Input value={value} onChange={(e) => { setValue(e.target.value); setLive(null); }} placeholder={tpl.placeholder} className="w-56" />
+          <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={tpl.placeholder} className="w-56" />
           <span className="self-center text-[12px] text-mist-500">{tpl.unit}</span>
-          <Button variant="ghost" onClick={checkNow} disabled={checking || !value.trim()}>{checking ? "Checking…" : "Check now"}</Button>
         </div>
       </Field>
 
-      {live && (
-        <Notice tone={live.error ? "warn" : live.ok ? "ok" : "info"}>
-          {live.error ? `Couldn't check: ${live.error}`
-            : live.ok ? <>Right now that&rsquo;s <span className="font-medium">true</span> — once saved, this will prove and unlock shortly.</>
-            : <>Right now that&rsquo;s <span className="font-medium">not true yet</span>. You can still save it — the account stays locked and unlocks by itself when it becomes true.</>}
+      {(checking || live) && (
+        <Notice tone={checking ? "info" : live?.error ? "warn" : live?.ok ? "ok" : "info"}>
+          {checking ? "Checking that condition…"
+            : live?.error ? <><span className="font-medium">That condition can&rsquo;t be read</span> — {live.error}. Fix it before saving, or the account would be locked against something that can never be proven.</>
+            : live?.ok ? <>Right now that&rsquo;s <span className="font-medium">true</span> — save it and the account unlocks within a couple of minutes.</>
+            : <>Right now that&rsquo;s <span className="font-medium">not true yet</span> — which is fine. Save it and the account stays locked, then unlocks by itself the moment it becomes true.</>}
         </Notice>
       )}
 
