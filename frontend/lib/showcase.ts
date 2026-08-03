@@ -115,11 +115,13 @@ export const DEMOS: Demo[] = [
   },
   {
     key: "escrow",
-    name: "Conditional (FDC)",
-    walletId: "0x250249f40da38df77ac238a53ef85c7509683379b0a4f8ff611d42bc6e99f59b",
+    name: "Conditional",
+    // Configured on the live ConditionalRule against a REAL pinned API (CoinGecko XRP/USD). The threshold
+    // is above today's price, so the condition genuinely hasn't been met — the refusal below is real.
+    walletId: "0x03a0009e67a07f1ca58024123cf5a83619e9aac3f54813637cfc99fc4e2062c7",
     rule: RULES.escrow,
-    config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves “delivery == true”.",
-    scene: "An escrow that stays locked until the world proves the condition. It hasn't been proven yet.",
+    config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves XRP is worth at least $5.",
+    scene: "A payment that waits on the real world. Flare hasn't proven the condition yet, so nothing can leave.",
     presets: [
       { label: "Try to pay the supplier now", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 50, attack: true },
     ],
