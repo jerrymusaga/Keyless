@@ -7,10 +7,10 @@ import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
 import {ExchangeRule} from "../src/rules/ExchangeRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
-import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
 import {FxrpMintRule} from "../src/rules/FxrpMintRule.sol";
 import {FxrpDefiRule} from "../src/rules/FxrpDefiRule.sol";
 import {FxrpRule} from "../src/rules/FxrpRule.sol";
+import {ConditionalRule} from "../src/rules/ConditionalRule.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
@@ -583,82 +583,165 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("m4"));
     }
 
-    // --- FDC escrow rule: pay when the world proves the condition -------------
+    // --- ConditionalRule: pay when the world proves the condition (v2) --------
+    //
+    // The headline test here is `test_conditional_forgedProofFromAnotherApiIsRejected`: the superseded
+    // FdcEscrowRule verified only that a proof was genuine and that its RESPONSE matched, never which
+    // request produced it. Conditions are naturally a jq predicate returning a bool, so every boolean
+    // escrow committed to the same hash — keccak(abi.encode(true)) = 0xb10e2d5276… — and `release()` is
+    // permissionless. Verified live on Coston2: an attestation of "github stars > 0" produces exactly
+    // that hash, so it would have released a "delivery == true" escrow. v2 pins the whole request.
 
-    /// @dev A Web2Json proof whose attested payload is `data`. merkleProof is empty — the mock verifier
-    ///      stands in for the real Merkle-root check, so only the payload matters here.
-    function _proof(bytes memory data) internal pure returns (IWeb2Json.Proof memory p) {
-        p.data.votingRound = 5830;
+    string constant API_URL = "https://api.coingecko.com/api/v3/simple/price";
+    string constant API_JQ = "{ok: (.ripple.usd >= 1)}";
+    string constant BOOL_SIG = "{\"components\":[{\"name\":\"ok\",\"type\":\"bool\"}],\"name\":\"task\",\"type\":\"tuple\"}";
+
+    /// @dev A request as the FDC attests it. `qp` is the query — same url + different query is a
+    ///      different question (ids=ripple vs ids=bitcoin), which is why the whole struct is pinned.
+    function _req(string memory url, string memory qp, string memory jq)
+        internal
+        pure
+        returns (IWeb2Json.RequestBody memory r)
+    {
+        r.url = url;
+        r.httpMethod = "GET";
+        r.headers = "{}";
+        r.queryParams = qp;
+        r.body = "{}";
+        r.postProcessJq = jq;
+        r.abiSignature = BOOL_SIG;
+    }
+
+    /// @dev A Web2Json proof attesting `data` for `req`. merkleProof is empty — the mock stands in for
+    ///      the Merkle-root check, so `setResult(true)` means "Flare really attested this".
+    function _web2Proof(IWeb2Json.RequestBody memory req, bytes memory data)
+        internal
+        pure
+        returns (IWeb2Json.Proof memory p)
+    {
+        p.data.votingRound = 1414809;
+        p.data.requestBody = req;
         p.data.responseBody.abiEncodedData = data;
     }
 
-    function _escrowWallet(FdcEscrowRule rule, bytes32 conditionHash) internal returns (bytes32 id) {
-        id = _wallet(alice, "escrow");
+    function _conditionWallet(ConditionalRule rule, bytes32 reqHash, bytes32 expected)
+        internal
+        returns (bytes32 id)
+    {
+        id = _wallet(alice, "conditional");
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, EXCHANGE, 10_000_000, conditionHash); // pay supplier up to 10 XRP on proof
+        rule.configure(id, EXCHANGE, 10_000_000, reqHash, expected); // pay supplier up to 10 XRP on proof
         vm.stopPrank();
     }
 
-    function test_escrow_locksUntilConditionProven_thenPays() public {
+    function _conditionalSetup() internal returns (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) {
         MockFdcVerification fdc = new MockFdcVerification();
-        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
-        bytes memory delivered = abi.encode(true); // the attested "delivery == true" payload
-        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+        rule = new ConditionalRule(address(accounts), address(fdc));
+        req = _req(API_URL, "{\"ids\":\"ripple\"}", API_JQ);
+        id = _conditionWallet(rule, rule.requestHashOf(req), keccak256(abi.encode(true)));
+    }
 
-        // before proof: even the escrow's own payee cannot be paid, and no instruction reaches the enclave
+    function test_conditional_locksUntilProven_thenPays() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _conditionalSetup();
+
+        // before the proof, even the pinned payee cannot be paid — and nothing reaches the enclave
         uint256 before = tee.instructionCount();
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven"));
-        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("e"));
-        assertEq(tee.instructionCount(), before, "no instruction before the condition is proven");
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven yet"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("r"));
+        assertEq(tee.instructionCount(), before, "no XRPL instruction while unproven");
 
-        // anyone submits the FDC proof of delivery; the proof is the trust, not the sender
-        vm.prank(bob);
-        rule.release(id, _proof(delivered));
+        // the world says yes: anyone may submit the attested proof
+        rule.release(id, _web2Proof(req, abi.encode(true)));
 
-        // now the supplier can be paid, within the cap
-        accounts.pay{value: FEE}(id, EXCHANGE, 6_000_000, bytes32("e1"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("r"));
         assertEq(tee.lastRecipient(), EXCHANGE);
-        assertEq(tee.lastAmount(), 6_000_000);
-        assertEq(tee.lastWalletId(), id);
     }
 
-    function test_escrow_rejectsUnverifiedProof() public {
-        MockFdcVerification fdc = new MockFdcVerification();
-        fdc.setResult(false); // FDC says: not attested
-        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
-        bytes memory delivered = abi.encode(true);
-        bytes32 id = _escrowWallet(rule, keccak256(delivered));
+    /// THE VULNERABILITY. A genuinely-attested proof of the attacker's OWN api that returns the same
+    /// `true` must NOT release someone else's condition. Under the old response-only check it did.
+    function test_conditional_forgedProofFromAnotherApiIsRejected() public {
+        (ConditionalRule rule, bytes32 id,) = _conditionalSetup();
 
-        vm.expectRevert(FdcEscrowRule.ProofNotVerified.selector);
-        rule.release(id, _proof(delivered));
+        // attacker attests their own endpoint — a real FDC attestation (mock verifier returns true),
+        // whose jq predicate yields the identical payload the escrow commits to.
+        // Note the payload is byte-identical to the one this condition commits to: every boolean
+        // condition shares keccak(abi.encode(true)). Only the request binding stops it.
+        IWeb2Json.RequestBody memory evil = _req("https://attacker.example/always-true", "{}", "{ok: true}");
+
+        vm.expectRevert(ConditionalRule.WrongRequest.selector);
+        rule.release(id, _web2Proof(evil, abi.encode(true)));
+
+        // and the account still cannot pay
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven yet"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
     }
 
-    function test_escrow_rejectsWrongCondition() public {
-        MockFdcVerification fdc = new MockFdcVerification();
-        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
-        bytes32 id = _escrowWallet(rule, keccak256(abi.encode(true)));
-
-        // a verified proof, but of the wrong outcome (delivery == false) -> condition mismatch
-        vm.expectRevert(FdcEscrowRule.ConditionMismatch.selector);
-        rule.release(id, _proof(abi.encode(false)));
+    /// Same URL, different question. CoinGecko /simple/price with ids=bitcoin is not ids=ripple — pinning
+    /// only the url would have missed this, which is why the whole request struct is committed.
+    function test_conditional_sameUrlDifferentQueryIsRejected() public {
+        (ConditionalRule rule, bytes32 id,) = _conditionalSetup();
+        IWeb2Json.RequestBody memory otherAsset = _req(API_URL, "{\"ids\":\"bitcoin\"}", API_JQ);
+        vm.expectRevert(ConditionalRule.WrongRequest.selector);
+        rule.release(id, _web2Proof(otherAsset, abi.encode(true)));
     }
 
-    function test_escrow_enforcesPayeeAndCapAfterRelease() public {
+    /// A tampered jq (a predicate rewritten to always pass) is a different request too.
+    function test_conditional_tamperedTransformIsRejected() public {
+        (ConditionalRule rule, bytes32 id,) = _conditionalSetup();
+        IWeb2Json.RequestBody memory tampered = _req(API_URL, "{\"ids\":\"ripple\"}", "{ok: true}");
+        vm.expectRevert(ConditionalRule.WrongRequest.selector);
+        rule.release(id, _web2Proof(tampered, abi.encode(true)));
+    }
+
+    function test_conditional_rejectsUnverifiedProof() public {
         MockFdcVerification fdc = new MockFdcVerification();
-        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
-        bytes memory delivered = abi.encode(true);
-        bytes32 id = _escrowWallet(rule, keccak256(delivered));
-        rule.release(id, _proof(delivered));
+        ConditionalRule rule = new ConditionalRule(address(accounts), address(fdc));
+        IWeb2Json.RequestBody memory req = _req(API_URL, "{\"ids\":\"ripple\"}", API_JQ);
+        bytes32 id = _conditionWallet(rule, rule.requestHashOf(req), keccak256(abi.encode(true)));
 
-        // released funds still can't be redirected to the attacker
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient is not the escrow payee"));
-        accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("x"));
+        fdc.setResult(false); // Flare did not attest this
+        vm.expectRevert(ConditionalRule.ProofNotVerified.selector);
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+    }
 
-        // nor exceed the escrow cap across releases
-        accounts.pay{value: FEE}(id, EXCHANGE, 10_000_000, bytes32("e1"));
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "over escrow cap"));
-        accounts.pay{value: FEE}(id, EXCHANGE, 1, bytes32("e2"));
+    /// The right request, but the world said no — the attested value isn't the one that means "go".
+    function test_conditional_rejectsWhenWorldSaysNo() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _conditionalSetup();
+        vm.expectRevert(ConditionalRule.ConditionNotMet.selector);
+        rule.release(id, _web2Proof(req, abi.encode(false)));
+    }
+
+    function test_conditional_enforcesPayeeAndCapAfterRelease() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _conditionalSetup();
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+
+        // proven, but still only the pinned payee
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient is not the payee"));
+        accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("r"));
+
+        // and never more than the cap, across releases
+        accounts.pay{value: FEE}(id, EXCHANGE, 9_000_000, bytes32("r"));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "over the cap"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 2_000_000, bytes32("r"));
+    }
+
+    function test_conditional_cannotProveTwice_andOwnerCanCancel() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _conditionalSetup();
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+
+        vm.expectRevert(ConditionalRule.AlreadyProven.selector);
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+
+        // a stranger cannot cancel; the owner can, and then nothing may be paid
+        vm.prank(bob);
+        vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
+        rule.cancel(id);
+
+        vm.prank(alice);
+        rule.cancel(id);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no active condition"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
     }
 
     // --- lockable rules: undrainable even against a stolen control key ---------
@@ -712,24 +795,6 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, EXCHANGE, 5_000_000, bytes32("ok"));
         assertEq(tee.lastRecipient(), EXCHANGE);
         assertEq(tee.lastAmount(), 5_000_000);
-    }
-
-    function test_escrow_ownerCancelsAndOnlyOwnerConfigures() public {
-        MockFdcVerification fdc = new MockFdcVerification();
-        FdcEscrowRule rule = new FdcEscrowRule(address(accounts), address(fdc));
-        bytes memory delivered = abi.encode(true);
-        bytes32 id = _escrowWallet(rule, keccak256(delivered));
-
-        // a stranger cannot reconfigure the escrow
-        vm.prank(bob);
-        vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
-        rule.configure(id, ATTACKER, 1, keccak256("x"));
-
-        // owner cancels; even a valid proof can't revive it
-        vm.prank(alice);
-        rule.cancel(id);
-        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "no active escrow"));
-        rule.release(id, _proof(delivered));
     }
 
     // --- exchange rule: allowlist + optional destination tag + optional per-tx cap ------------

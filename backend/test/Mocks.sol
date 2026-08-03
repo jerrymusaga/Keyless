@@ -93,14 +93,22 @@ contract MockTeeRegistry is ITeeExtensionRegistry, ITeeMachineRegistry {
     }
 }
 
-/// @notice Mock of Flare's FdcVerification. `verifyJsonApi` returns whatever the test sets — standing
-///         in for the real Merkle-root check so escrow tests can drive both the proven and unproven
-///         paths without a live FDC round.
+/// @notice Mock of Flare's FdcVerification. Returns whatever the test sets — standing in for the real
+///         Merkle-root check so condition tests can drive both the proven and unproven paths without a
+///         live FDC round. Exposes BOTH names: the live contract's `verifyWeb2Json` (what ConditionalRule
+///         calls) and the legacy `verifyJsonApi` (what the superseded FdcEscrowRule called).
+///
+///         `result = true` models a GENUINELY ATTESTED proof — which is exactly the attacker's position
+///         in the forged-proof test: anyone can get a real attestation of their own API.
 contract MockFdcVerification {
     bool public result = true;
 
     function setResult(bool r) external {
         result = r;
+    }
+
+    function verifyWeb2Json(IWeb2Json.Proof calldata) external view returns (bool) {
+        return result;
     }
 
     function verifyJsonApi(IWeb2Json.Proof calldata) external view returns (bool) {

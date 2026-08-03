@@ -45,6 +45,10 @@ interface IWeb2Json {
 ///         FDC Merkle root for its voting round.
 /// @dev Coston2: `0x906507E0B64bcD494Db73bd0459d1C667e14B933`. Returns true only if the proof's data
 ///      was attested by Flare's validator set for that round — i.e. the world really said this.
+///
+///      ⚠️ The live contract's function is `verifyWeb2Json` — there is NO `verifyJsonApi` on it (the old
+///      name here made every release() revert). Verified against the deployed implementation
+///      `0x6e332052…` and confirmed end-to-end: a real attested proof returns true on-chain.
 interface IFdcVerification {
-    function verifyJsonApi(IWeb2Json.Proof calldata _proof) external view returns (bool _proved);
+    function verifyWeb2Json(IWeb2Json.Proof calldata _proof) external view returns (bool _proved);
 }

@@ -6,7 +6,7 @@ import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
-import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
+import {ConditionalRule} from "../src/rules/ConditionalRule.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
 
@@ -40,7 +40,7 @@ contract DeployKeyless is Script {
         AllowlistRule allowlist = new AllowlistRule(address(accounts));
         RateLimitRule rateLimit = new RateLimitRule(address(accounts));
         SubscriptionRule subscription = new SubscriptionRule(address(accounts));
-        FdcEscrowRule escrow = new FdcEscrowRule(address(accounts), fdc);
+        ConditionalRule conditional = new ConditionalRule(address(accounts), fdc);
         vm.stopBroadcast();
 
         console2.log("=== Keyless deployed ===");
@@ -48,7 +48,7 @@ contract DeployKeyless is Script {
         console2.log("AllowlistRule    :", address(allowlist));
         console2.log("RateLimitRule    :", address(rateLimit));
         console2.log("SubscriptionRule :", address(subscription));
-        console2.log("FdcEscrowRule    :", address(escrow));
+        console2.log("ConditionalRule  :", address(conditional));
         console2.log("Enclave reporter :", reporter);
         console2.log("");
         console2.log("Next: register the extension (fce-sign pre-build) with KeylessAccounts as the");

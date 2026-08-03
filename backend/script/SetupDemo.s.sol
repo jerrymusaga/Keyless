@@ -6,7 +6,8 @@ import {KeylessAccounts} from "../src/KeylessAccounts.sol";
 import {AllowlistRule} from "../src/rules/AllowlistRule.sol";
 import {RateLimitRule} from "../src/rules/RateLimitRule.sol";
 import {SubscriptionRule} from "../src/rules/SubscriptionRule.sol";
-import {FdcEscrowRule} from "../src/rules/FdcEscrowRule.sol";
+import {ConditionalRule} from "../src/rules/ConditionalRule.sol";
+import {IWeb2Json} from "../src/interfaces/IFdc.sol";
 
 /// @notice Creates the four demo accounts the public no-login showcase (/see) dry-runs against. Each is
 ///         a real on-chain account owned by the deployer, configured with a rule so the showcase's
@@ -25,7 +26,7 @@ contract SetupDemo is Script {
         AllowlistRule allowlist = AllowlistRule(vm.envAddress("ALLOWLIST_RULE"));
         RateLimitRule rateLimit = RateLimitRule(vm.envAddress("RATELIMIT_RULE"));
         SubscriptionRule subscription = SubscriptionRule(vm.envAddress("SUBSCRIPTION_RULE"));
-        FdcEscrowRule escrow = FdcEscrowRule(vm.envAddress("ESCROW_RULE"));
+        ConditionalRule conditional = ConditionalRule(vm.envAddress("CONDITIONAL_RULE"));
 
         // Instruction fee to attach; excess refunds to claimBack. Override via INIT_FEE if the chain's
         // fee differs. (The scaffold dropped on-chain fee quoting.)
@@ -49,10 +50,20 @@ contract SetupDemo is Script {
         accounts.setRule(wSub, address(subscription));
         subscription.configure(wSub, MERCHANT, 9_990_000, 30 days);
 
-        // 4. Conditional (FDC Escrow): payee + cap + condition (stays locked until proven)
-        bytes32 wEsc = accounts.createWallet{value: initFee}(bytes32("demo-escrow"));
-        accounts.setRule(wEsc, address(escrow));
-        escrow.configure(wEsc, EXCHANGE, 100_000_000, keccak256(bytes("delivery == true")));
+        // 4. Conditional (FDC): payee + cap + a PINNED live API request. Stays locked until an FDC
+        //    Web2Json attestation of exactly this request returns `true`.
+        IWeb2Json.RequestBody memory req;
+        req.url = "https://api.coingecko.com/api/v3/simple/price";
+        req.httpMethod = "GET";
+        req.headers = "{}";
+        req.queryParams = "{\"ids\":\"ripple\",\"vs_currencies\":\"usd\"}";
+        req.body = "{}";
+        req.postProcessJq = "{ok: (.ripple.usd >= 1)}";
+        req.abiSignature = "{\"components\":[{\"internalType\":\"bool\",\"name\":\"ok\",\"type\":\"bool\"}],\"name\":\"task\",\"type\":\"tuple\"}";
+
+        bytes32 wCond = accounts.createWallet{value: initFee}(bytes32("demo-conditional"));
+        accounts.setRule(wCond, address(conditional));
+        conditional.configure(wCond, EXCHANGE, 100_000_000, conditional.requestHashOf(req), keccak256(abi.encode(true)));
 
         vm.stopBroadcast();
 
@@ -60,6 +71,6 @@ contract SetupDemo is Script {
         console2.log("allowlist   :", vm.toString(wAllow));
         console2.log("rateLimit   :", vm.toString(wRate));
         console2.log("subscription:", vm.toString(wSub));
-        console2.log("escrow      :", vm.toString(wEsc));
+        console2.log("conditional :", vm.toString(wCond));
     }
 }
