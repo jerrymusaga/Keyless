@@ -138,6 +138,29 @@ async function peek(cond) {
   return j.response.responseBody.abiEncodedData;
 }
 
+/** Fetch an attestation proof for a request in a given round, or null if it isn't there. */
+async function fetchProof(abiEncodedRequest, round) {
+  const r = await fetch(`${DA_LAYER_URL}/api/v1/fdc/proof-by-request-round-raw`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ votingRoundId: round, requestBytes: abiEncodedRequest }),
+  });
+  const j = await r.json().catch(() => ({}));
+  return j?.response_hex ? j : null;
+}
+
+/** Submit `proof` to release the account. Returns the tx hash, or null if the world said "not yet". */
+async function releaseWith(pub, wallet, walletId, da, expectedHash, log = console.log) {
+  const [data] = decodeAbiParameters([RESP_ABI], da.response_hex);
+  const attested = data.responseBody.abiEncodedData;
+  if (keccak256(attested) !== expectedHash.toLowerCase()) {
+    log(`→ attested ${attested} — the condition is not met. Nothing released.`);
+    return null;
+  }
+  const tx = await wallet.writeContract({ address: RULE, abi: RULE_ABI, functionName: "release", args: [walletId, { merkleProof: da.proof, data }] });
+  await pub.waitForTransactionReceipt({ hash: tx });
+  return tx;
+}
+
 /** Prove one account's condition: attest its pinned request via FDC, then release() on-chain. */
 async function proveAndRelease(pub, wallet, walletId, cond, expectedHash, log = console.log) {
   log("[1/5] verifier prepareRequest…");
@@ -211,23 +234,54 @@ async function isTrueNow(request, expectedHash) {
 
 async function watch(pub, wallet) {
   console.log(`[watch] polling conditional accounts every ${POLL_MS / 1000}s…`);
-  const inFlight = new Set();
+  // walletId -> { abiEncodedRequest, round, since }. Once an attestation is submitted we POLL that round
+  // across ticks instead of re-requesting: the FDC deduplicates identical requests, so re-submitting the
+  // same question never yields a second proof — it just burns a fee and waits forever. (Verified on
+  // Coston2: the first request produced a proof; identical later ones returned "attestation request not
+  // found" in every round.) An existing proof stays valid, so polling is also the cheapest path.
+  const pending = new Map();
+
   for (;;) {
     try {
       const configs = await configuredConditions();
       for (const c of configs) {
-        if (inFlight.has(c.walletId)) continue;
         const [, , , expectedHash, , released, active] = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [c.walletId] });
-        if (!active || released) continue;
-        // Attesting costs a fee and ~90s, so preview the answer first (free) and only prove when it passes.
+        const short = c.walletId.slice(0, 10);
+        if (!active || released) { pending.delete(c.walletId); continue; }
+
+        // Already waiting on a round? Just look for the proof — never re-request.
+        const p = pending.get(c.walletId);
+        if (p) {
+          const da = await fetchProof(p.abiEncodedRequest, p.round);
+          if (!da) {
+            if (Date.now() - p.since > 20 * 60 * 1000) { console.log(`[watch] ${short}… round ${p.round} yielded nothing after 20m, will re-request`); pending.delete(c.walletId); }
+            continue;
+          }
+          const tx = await releaseWith(pub, wallet, c.walletId, da, expectedHash, (m) => console.log(`   ${m}`));
+          if (tx) console.log(`[watch] ✓ released ${short}… -> ${tx}`);
+          pending.delete(c.walletId);
+          continue;
+        }
+
+        // Not waiting yet: preview the answer for free, and only pay when it's actually true.
         const live = await isTrueNow(c.request, expectedHash);
-        if (!live.ok) continue; // not true yet (or unreachable) — check again next tick
-        inFlight.add(c.walletId);
-        console.log(`[watch] ${c.walletId.slice(0, 10)}… condition is TRUE, proving (${c.request.url})`);
-        proveAndRelease(pub, wallet, c.walletId, c.request, expectedHash, (m) => console.log(`   ${m}`))
-          .then((tx) => console.log(tx ? `[watch] ✓ released ${c.walletId.slice(0, 10)}… -> ${tx}` : `[watch] not true yet: ${c.walletId.slice(0, 10)}…`))
-          .catch((e) => console.error(`[watch] ${c.walletId.slice(0, 10)}… failed: ${e.message || e}`))
-          .finally(() => inFlight.delete(c.walletId));
+        if (!live.ok) continue;
+
+        console.log(`[watch] ${short}… condition is TRUE — requesting attestation (${c.request.url})`);
+        const abiEncodedRequest = await prepare(c.request);
+        // If this exact question was attested recently, reuse that proof rather than paying again.
+        const fee = await pub.readContract({ address: ADDR.fee, abi: [{ type: "function", name: "getRequestFee", stateMutability: "view", inputs: [{ type: "bytes" }], outputs: [{ type: "uint256" }] }], functionName: "getRequestFee", args: [abiEncodedRequest] });
+        const h = await wallet.writeContract({ address: ADDR.fdcHub, abi: [{ type: "function", name: "requestAttestation", stateMutability: "payable", inputs: [{ type: "bytes" }], outputs: [] }], functionName: "requestAttestation", args: [abiEncodedRequest], value: fee });
+        const rcpt = await pub.waitForTransactionReceipt({ hash: h });
+        const blk = await pub.getBlock({ blockNumber: rcpt.blockNumber });
+        const FSM = [{ type: "function", name: "firstVotingRoundStartTs", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] }, { type: "function", name: "votingEpochDurationSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] }];
+        const [first, dur] = await Promise.all([
+          pub.readContract({ address: ADDR.fsm, abi: FSM, functionName: "firstVotingRoundStartTs" }),
+          pub.readContract({ address: ADDR.fsm, abi: FSM, functionName: "votingEpochDurationSeconds" }),
+        ]);
+        const round = Number((BigInt(blk.timestamp) - BigInt(first)) / BigInt(dur));
+        console.log(`[watch] ${short}… submitted, round ${round} — will collect the proof when it finalises`);
+        pending.set(c.walletId, { abiEncodedRequest, round, since: Date.now() });
       }
     } catch (e) {
       console.error("[watch] loop error:", e.message || e);
