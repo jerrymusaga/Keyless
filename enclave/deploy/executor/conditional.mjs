@@ -245,6 +245,8 @@ async function watch(pub, wallet) {
     try {
       const configs = await configuredConditions();
       for (const c of configs) {
+       // Isolate each account: a flaky RPC/DA/verifier call for one must not abort the whole tick.
+       try {
         const [, , , expectedHash, , released, active] = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [c.walletId] });
         const short = c.walletId.slice(0, 10);
         if (!active || released) { pending.delete(c.walletId); continue; }
@@ -282,6 +284,9 @@ async function watch(pub, wallet) {
         const round = Number((BigInt(blk.timestamp) - BigInt(first)) / BigInt(dur));
         console.log(`[watch] ${short}… submitted, round ${round} — will collect the proof when it finalises`);
         pending.set(c.walletId, { abiEncodedRequest, round, since: Date.now() });
+       } catch (e) {
+        console.error(`[watch] ${c.walletId.slice(0, 10)}… tick failed (will retry): ${e.shortMessage || e.message || e}`);
+       }
       }
     } catch (e) {
       console.error("[watch] loop error:", e.message || e);
