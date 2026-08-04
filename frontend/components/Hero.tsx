@@ -130,9 +130,20 @@ function AppMockup({ reduce }: { reduce: boolean }) {
           </div>
         </motion.div>
 
+        {/* the can/can't card — the actual centrepiece of the account page */}
+        <motion.div className="rounded-xl border border-signal-500/25 bg-signal-500/[0.04] p-4" {...row(0.56)}>
+          <span className="text-[11px] text-mist-400">What this account can &amp; can&rsquo;t do</span>
+          <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px] leading-snug">
+            <span className="flex gap-1.5 text-mist-300"><span className="text-allow-500">✓</span>Pay your exchange</span>
+            <span className="flex gap-1.5 text-mist-300"><span className="text-refuse-400">✕</span>Send anywhere else</span>
+            <span className="flex gap-1.5 text-mist-300"><span className="text-allow-500">✓</span>Up to 5,000 XRP each</span>
+            <span className="flex gap-1.5 text-mist-300"><span className="text-refuse-400">✕</span>Be drained — even if your key is stolen</span>
+          </div>
+        </motion.div>
+
         {/* the money shot: a refused spend */}
-        <motion.div className="rounded-xl border hairline bg-ink-950/60 p-4" {...row(0.62)}>
-          <span className="text-[11px] text-mist-500">Someone with the key tries to send it elsewhere</span>
+        <motion.div className="rounded-xl border hairline bg-ink-950/60 p-4" {...row(0.68)}>
+          <span className="text-[11px] text-mist-500">Try to break it — someone with the key sends it elsewhere</span>
           <div className="mt-2 flex items-center gap-2">
             <div className="flex-1 rounded-lg border hairline bg-ink-900 px-3 py-2 font-mono text-[12px] text-mist-300">
               rF3x9…Att4cker

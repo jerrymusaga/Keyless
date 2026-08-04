@@ -1,5 +1,5 @@
 import { Hero } from "@/components/Hero";
-import { TrustBar, Features, HowItWorks, SeeBand, Security, FinalCTA } from "@/components/marketing";
+import { TrustBar, Features, HowItWorks, Conditional, SeeBand, Security, FinalCTA } from "@/components/marketing";
 import { NetworkStats } from "@/components/NetworkStats";
 import { Roadmap } from "@/components/Roadmap";
 import { Footer } from "@/components/Footer";
@@ -7,7 +7,7 @@ import { Footer } from "@/components/Footer";
 /**
  * A conventional product landing (wallet-style), dark theme: hero with a live app
  * mockup, trust bar, the rule templates, how-it-works, a pull to the live /see
- * demo, the security argument, roadmap, and a final call to action. The old
+ * demo, the conditional-payments capability, the security argument, roadmap, and a final CTA. The old
  * editorial single-narrative sections (Control/Refuse/Evidence) now live as the
  * interactive proof at /see.
  */
@@ -19,6 +19,7 @@ export default function Page() {
       <TrustBar />
       <Features />
       <HowItWorks />
+      <Conditional />
       <SeeBand />
       <Security />
       <Roadmap />

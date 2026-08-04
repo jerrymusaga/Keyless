@@ -88,6 +88,83 @@ export function HowItWorks() {
   );
 }
 
+/**
+ * The capability story, deliberately placed AFTER the hero's defensive one. The hero answers "what if my
+ * key is stolen"; this answers "what else can a rule do" — and it's the strongest Flare integration:
+ * one payment composing the enclave (FCC), an attestation of the real world (FDC), and XRPL settlement.
+ */
+export function Conditional() {
+  return (
+    <section>
+      <div className="mx-auto w-full max-w-6xl px-6 py-24 md:py-28">
+        <div className="grid items-center gap-14 lg:grid-cols-[1fr_1fr]">
+          <Reveal>
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-signal-400">Conditional payments</p>
+            <h2 className="mt-4 text-balance text-3xl font-medium leading-[1.1] tracking-[-0.02em] text-mist-100 md:text-4xl">
+              …and it can wait on the <span className="text-signal-400">real world.</span>
+            </h2>
+            <p className="mt-5 max-w-lg text-pretty leading-relaxed text-mist-400">
+              Lock a payment to something that has to be true first — a shipment marked delivered, a milestone
+              closed, a price reached. Flare&rsquo;s Data Connector proves it on-chain, and only then can the
+              money move. XRP&rsquo;s own escrow can do timeouts and hashlocks; it can&rsquo;t do this.
+            </p>
+            <p className="mt-4 max-w-lg text-[14px] leading-relaxed text-mist-500">
+              Neither side can jump the queue: the payee can&rsquo;t be paid before it&rsquo;s proven, and the
+              payer can&rsquo;t pull the funds back before the deadline. If it never happens, they return.
+            </p>
+            <div className="mt-8">
+              <a href="/see" className="inline-flex items-center gap-2 rounded-xl border hairline bg-ink-850/70 px-5 py-3 text-sm text-mist-200 transition-colors hover:border-ink-600 hover:text-mist-100">
+                Try to release it early ↗
+              </a>
+            </div>
+          </Reveal>
+
+          <Reveal delay={0.1}>
+            <div className="rounded-2xl border hairline bg-ink-900/60 p-6">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-mist-100">Supplier payment</span>
+                <span className="rounded-full border border-warn-500/30 bg-warn-500/10 px-2.5 py-0.5 text-[10px] text-warn-500">
+                  waiting on proof
+                </span>
+              </div>
+
+              <div className="mt-5 space-y-2.5">
+                <div className="flex items-center gap-3 rounded-lg border hairline bg-ink-950/60 px-3.5 py-2.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-signal-400">Pay</span>
+                  <span className="font-mono text-[12.5px] text-mist-300">rSupplier…8fK2 · up to 100 XRP</span>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border border-signal-500/30 bg-signal-500/[0.05] px-3.5 py-2.5">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-signal-400">Only when</span>
+                  <span className="text-[12.5px] text-mist-200">the courier API says <span className="font-mono text-signal-300">delivered</span></span>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-2">
+                <div className="flex items-start gap-2 rounded-lg border border-refuse-500/35 bg-refuse-500/[0.06] px-3.5 py-2.5">
+                  <span className="text-refuse-500">✕</span>
+                  <span className="text-[12px] leading-relaxed text-refuse-400">
+                    <span className="font-medium">Pay the supplier now</span> — refused, condition not proven yet.
+                  </span>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border border-refuse-500/35 bg-refuse-500/[0.06] px-3.5 py-2.5">
+                  <span className="text-refuse-500">✕</span>
+                  <span className="text-[12px] leading-relaxed text-refuse-400">
+                    <span className="font-medium">Take it back early</span> — refused, the deadline hasn&rsquo;t passed.
+                  </span>
+                </div>
+              </div>
+
+              <p className="mt-5 border-t hairline pt-4 font-mono text-[11px] leading-relaxed text-mist-500">
+                enclave holds the key · Flare&rsquo;s validators prove the world · XRPL settles
+              </p>
+            </div>
+          </Reveal>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function SeeBand() {
   return (
     <section className="mx-auto w-full max-w-6xl px-6 py-20">
