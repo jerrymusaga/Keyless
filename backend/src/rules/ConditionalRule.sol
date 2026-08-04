@@ -46,6 +46,8 @@ contract ConditionalRule is KeylessRuleBase {
         uint256 maxAmount; // drops, total across releases
         bytes32 requestHash; // keccak(abi.encode(requestBody)) — pins the exact API + transform
         bytes32 expectedHash; // keccak(abiEncodedData) that means "condition satisfied"
+        uint256 deadline; // unix seconds; 0 = waits forever. After it, an unproven condition expires.
+        bytes32 fallbackRecipient; // keccak(recipient) payable ONLY after an expired deadline; 0 = none
         uint256 spent; // drops already paid out
         bool released; // condition proven via FDC
         bool active;
@@ -64,7 +66,9 @@ contract ConditionalRule is KeylessRuleBase {
         uint256 maxAmount,
         bytes32 requestHash,
         bytes32 expectedHash,
-        IWeb2Json.RequestBody request
+        IWeb2Json.RequestBody request,
+        uint256 deadline,
+        string fallbackRecipient
     );
     event ConditionProven(bytes32 indexed walletId, uint64 votingRound);
     event ConditionCancelled(bytes32 indexed walletId);
@@ -73,6 +77,7 @@ contract ConditionalRule is KeylessRuleBase {
     error ProofNotVerified();
     error WrongRequest();
     error ConditionNotMet();
+    error DeadlinePassed();
 
     constructor(address _accounts, address _fdc) KeylessRuleBase(_accounts) {
         fdc = IFdcVerification(_fdc);
@@ -93,27 +98,49 @@ contract ConditionalRule is KeylessRuleBase {
     /// @param expectedHash keccak of the attested `abiEncodedData` meaning satisfied. For the usual
     ///                     jq-predicate shape (`{ok: (.status == "DELIVERED")}` → bool) that is
     ///                     `keccak(abi.encode(true))`; safe here only because the request is also pinned.
+    /// @param deadline          Unix seconds after which an unproven condition expires, freeing the
+    ///                          account to pay `fallbackRecipient` instead. 0 waits forever.
+    /// @param fallbackRecipient Who may be paid once an unproven condition has expired — normally the
+    ///                          payer's own address. Without it, a condition that never comes true would
+    ///                          strand the account: this rule permits nobody else, so a locked account
+    ///                          with an unmet condition could never pay anyone again.
     function configure(
         bytes32 walletId,
         string calldata recipient,
         uint256 maxAmount,
         IWeb2Json.RequestBody calldata request,
-        bytes32 expectedHash
+        bytes32 expectedHash,
+        uint256 deadline,
+        string calldata fallbackRecipient
     ) external onlyWalletOwner(walletId) notLocked(walletId) {
         if (maxAmount == 0) revert Rejected("zero cap");
         if (bytes(request.url).length == 0) revert Rejected("no request pinned");
         if (expectedHash == bytes32(0)) revert Rejected("no condition");
+        if (deadline != 0 && deadline <= block.timestamp) revert Rejected("deadline already passed");
+        // A fallback without a deadline could never be reached, and would only mislead.
+        if (bytes(fallbackRecipient).length != 0 && deadline == 0) revert Rejected("fallback needs a deadline");
         bytes32 requestHash = requestHashOf(request);
         conditionOf[walletId] = Condition({
             recipient: keccak256(bytes(recipient)),
             maxAmount: maxAmount,
             requestHash: requestHash,
             expectedHash: expectedHash,
+            deadline: deadline,
+            fallbackRecipient: bytes(fallbackRecipient).length == 0 ? bytes32(0) : keccak256(bytes(fallbackRecipient)),
             spent: 0,
             released: false,
             active: true
         });
-        emit ConditionConfigured(walletId, recipient, maxAmount, requestHash, expectedHash, request);
+        emit ConditionConfigured(
+            walletId, recipient, maxAmount, requestHash, expectedHash, request, deadline, fallbackRecipient
+        );
+    }
+
+    /// @notice Has an unproven condition passed its deadline? Once true the payee can no longer be paid,
+    ///         and the fallback recipient can.
+    function isExpired(bytes32 walletId) public view returns (bool) {
+        Condition storage c = conditionOf[walletId];
+        return c.active && !c.released && c.deadline != 0 && block.timestamp > c.deadline;
     }
 
     /// @notice Prove the condition. Verifies the attestation against Flare's Merkle root for its voting
@@ -123,6 +150,9 @@ contract ConditionalRule is KeylessRuleBase {
         Condition storage c = conditionOf[walletId];
         if (!c.active) revert Rejected("no active condition");
         if (c.released) revert AlreadyProven();
+        // A proof arriving after the window has closed must not reopen it — otherwise the payer could
+        // never rely on the deadline, and both sides could briefly be payable.
+        if (c.deadline != 0 && block.timestamp > c.deadline) revert DeadlinePassed();
         // 1. Flare's validators really attested this.
         if (!fdc.verifyWeb2Json(proof)) revert ProofNotVerified();
         // 2. …of exactly the request this account pinned (closes the forged-proof hole).
@@ -150,8 +180,19 @@ contract ConditionalRule is KeylessRuleBase {
         if (amount == 0) revert Rejected("zero amount");
         Condition storage c = conditionOf[walletId];
         if (!c.active) revert Rejected("no active condition");
-        if (!c.released) revert Rejected("condition not proven yet");
-        if (keccak256(bytes(recipient)) != c.recipient) revert Rejected("recipient is not the payee");
+
+        // Exactly one side is payable at a time, and the deadline is what switches between them.
+        if (!c.released) {
+            // The window is still open: nobody can be paid until the world proves the condition.
+            if (c.deadline == 0 || block.timestamp <= c.deadline) revert Rejected("condition not proven yet");
+            // The window closed unproven. The payee never earned it; the fallback (normally the payer
+            // themselves) can now be paid, so the funds aren't stranded in an account that permits no one.
+            if (c.fallbackRecipient == bytes32(0)) revert Rejected("condition expired unproven");
+            if (keccak256(bytes(recipient)) != c.fallbackRecipient) revert Rejected("condition expired - only the fallback may be paid");
+        } else {
+            if (keccak256(bytes(recipient)) != c.recipient) revert Rejected("recipient is not the payee");
+        }
+
         if (c.spent + amount > c.maxAmount) revert Rejected("over the cap");
         c.spent += amount;
     }

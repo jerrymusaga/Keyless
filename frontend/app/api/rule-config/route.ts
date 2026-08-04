@@ -44,6 +44,7 @@ const E = {
       { name: "queryParams", type: "string" }, { name: "body", type: "string" },
       { name: "postProcessJq", type: "string" }, { name: "abiSignature", type: "string" },
     ] },
+    { name: "deadline", type: "uint256" }, { name: "fallbackRecipient", type: "string" },
   ] } as AbiEvent,
   escrowCancelled: { type: "event", name: "ConditionCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
   escrowReleased: { type: "event", name: "ConditionProven", inputs: [
@@ -123,7 +124,7 @@ export async function POST(req: Request) {
 
     // conditional
     const events = await replay(rule, [E.escrowConfigured, E.escrowCancelled, E.escrowReleased], walletId);
-    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string } | null = null;
+    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string } | null = null;
     for (const e of events) {
       if (e.ev.name === "ConditionConfigured") {
         escrow = {
@@ -131,6 +132,8 @@ export async function POST(req: Request) {
           maxAmount: String(e.args.maxAmount),
           released: false,
           condition: describeCondition(e.args.request as { url?: string; postProcessJq?: string } | undefined),
+          deadline: String(e.args.deadline ?? "0"),
+          fallback: String(e.args.fallbackRecipient ?? ""),
         };
       } else if (e.ev.name === "ConditionProven") { if (escrow) escrow.released = true; }
       else escrow = null; // ConditionCancelled

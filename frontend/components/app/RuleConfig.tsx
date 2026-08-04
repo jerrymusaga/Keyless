@@ -950,6 +950,8 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [kind, setKind] = useState<ConditionKey>("xrpPrice");
   const [value, setValue] = useState("");
   const [live, setLive] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [deadline, setDeadline] = useState(""); // yyyy-mm-dd; blank = waits forever
+  const [fallback, setFallback] = useState("");
   const [checking, setChecking] = useState(false);
   const [onchain, setOnchain] = useState<{ maxAmount: bigint; released: boolean; active: boolean } | null>(null);
   const { busy, msg, run } = useConfigAction();
@@ -997,6 +999,14 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
+    // A deadline needs somewhere for the money to go, or expiry would strand the account.
+    let deadlineTs = 0n;
+    if (deadline) {
+      const ts = Math.floor(new Date(`${deadline}T23:59:59Z`).getTime() / 1000);
+      if (!ts || ts <= Math.floor(Date.now() / 1000)) return alert("Pick a deadline in the future.");
+      deadlineTs = BigInt(ts);
+      try { assertXrpl(fallback); } catch { return alert("Add the address to return the funds to if the condition never happens."); }
+    }
     // Never let someone lock funds against a condition that can't be read — that would strand the account
     // with no way to ever unlock it. A condition that's merely *false* is fine: that's the whole point.
     try {
@@ -1011,7 +1021,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
     }
     const ok = await run(
       RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure",
-      [walletId, recipient.trim(), drops, tpl.build(value.trim()), EXPECTED_TRUE],
+      [walletId, recipient.trim(), drops, tpl.build(value.trim()), EXPECTED_TRUE, deadlineTs, deadlineTs === 0n ? "" : fallback.trim()],
       `Set. This account can't pay until ${tpl.describe(value.trim())} — proven on-chain by Flare.`,
     );
     if (ok) { load(); signalConfigChanged(); }
@@ -1061,6 +1071,26 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
             : <>Right now that&rsquo;s <span className="font-medium">not true yet</span> — which is fine. Save it and the account stays locked, then unlocks by itself the moment it becomes true.</>}
         </Notice>
       )}
+
+      <Field
+        label="And if it never happens?"
+        hint="Optional. Without a deadline this account waits forever — and since it may pay nobody but the payee, a condition that never comes true would leave the funds stuck."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={deadline}
+            onChange={(e) => setDeadline(e.target.value)}
+            className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 font-mono text-sm text-mist-100 outline-none transition-colors focus:border-signal-500/60"
+          />
+          {deadline && (
+            <>
+              <span className="text-[12px] text-mist-500">then release the funds back to</span>
+              <Input value={fallback} onChange={(e) => setFallback(e.target.value)} placeholder="your own r-address" className="w-56" />
+            </>
+          )}
+        </div>
+      </Field>
 
       <Button onClick={configure} disabled={busy}>{busy ? "…" : "Save"}</Button>
       {msg && <Notice tone={msg.tone}>{msg.text}</Notice>}

@@ -555,6 +555,88 @@ contract KeylessAccountsTest is Test {
         accounts.pay{value: FEE}(id, ATTACKER, 1000, redeemRef);
     }
 
+    // --- Conditional: the deadline / fallback (no stranded funds) ------------
+    //
+    // Under this rule the account may pay NOBODY except the payee, and only once proven. So a condition
+    // that never comes true would strand a locked account forever. A deadline plus a fallback recipient
+    // (normally the payer themselves) closes that: before the deadline only the payee can be paid, after
+    // it only the fallback can, and never both.
+
+    string constant PAYER_BACK = "rPAYERrefundXXXXXXXXXXXXXXXXXXXXXXX";
+
+    function _expiringSetup(uint256 deadline)
+        internal
+        returns (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req)
+    {
+        MockFdcVerification fdc = new MockFdcVerification();
+        rule = new ConditionalRule(address(accounts), address(fdc));
+        req = _req(API_URL, "{\"ids\":\"ripple\"}", API_JQ);
+        id = _wallet(alice, "expiring");
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        rule.configure(id, EXCHANGE, 10_000_000, req, keccak256(abi.encode(true)), deadline, PAYER_BACK);
+        vm.stopPrank();
+    }
+
+    function test_conditional_beforeDeadline_neitherSideCanBePaid() public {
+        (, bytes32 id,) = _expiringSetup(block.timestamp + 30 days);
+
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven yet"));
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
+        // the fallback is NOT a way to jump the queue while the window is open
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition not proven yet"));
+        accounts.pay{value: FEE}(id, PAYER_BACK, 1_000_000, bytes32("r"));
+    }
+
+    function test_conditional_afterDeadline_onlyFallbackIsPayable() public {
+        (ConditionalRule rule, bytes32 id,) = _expiringSetup(block.timestamp + 30 days);
+        vm.warp(block.timestamp + 31 days);
+        assertTrue(rule.isExpired(id), "unproven past its deadline");
+
+        // the payee never earned it
+        vm.expectRevert(
+            abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "condition expired - only the fallback may be paid")
+        );
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
+
+        // the payer gets their money back — the account is not stranded
+        accounts.pay{value: FEE}(id, PAYER_BACK, 1_000_000, bytes32("r"));
+        assertEq(tee.lastRecipient(), PAYER_BACK);
+    }
+
+    function test_conditional_proofAfterDeadlineCannotReopenTheWindow() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _expiringSetup(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 8 days);
+        vm.expectRevert(ConditionalRule.DeadlinePassed.selector);
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+    }
+
+    function test_conditional_provenBeforeDeadline_paysPayeeNotFallback() public {
+        (ConditionalRule rule, bytes32 id, IWeb2Json.RequestBody memory req) = _expiringSetup(block.timestamp + 7 days);
+        rule.release(id, _web2Proof(req, abi.encode(true)));
+        vm.warp(block.timestamp + 8 days); // deadline passes AFTER it was proven — irrelevant now
+
+        accounts.pay{value: FEE}(id, EXCHANGE, 1_000_000, bytes32("r"));
+        assertEq(tee.lastRecipient(), EXCHANGE);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient is not the payee"));
+        accounts.pay{value: FEE}(id, PAYER_BACK, 1_000_000, bytes32("r"));
+    }
+
+    function test_conditional_configureRejectsBadDeadlineOrDanglingFallback() public {
+        MockFdcVerification fdc = new MockFdcVerification();
+        ConditionalRule rule = new ConditionalRule(address(accounts), address(fdc));
+        IWeb2Json.RequestBody memory req = _req(API_URL, "{}", API_JQ);
+        bytes32 id = _wallet(alice, "bad");
+        vm.startPrank(alice);
+        accounts.setRule(id, address(rule));
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "deadline already passed"));
+        rule.configure(id, EXCHANGE, 1_000_000, req, keccak256(abi.encode(true)), block.timestamp, PAYER_BACK);
+        // a fallback with no deadline could never be reached
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "fallback needs a deadline"));
+        rule.configure(id, EXCHANGE, 1_000_000, req, keccak256(abi.encode(true)), 0, PAYER_BACK);
+        vm.stopPrank();
+    }
+
     // --- subscription rule ---------------------------------------------------
 
     function test_subscription_merchantCappedAndCancellable() public {
@@ -631,7 +713,7 @@ contract KeylessAccountsTest is Test {
         id = _wallet(alice, "conditional");
         vm.startPrank(alice);
         accounts.setRule(id, address(rule));
-        rule.configure(id, EXCHANGE, 10_000_000, req, expected); // pay supplier up to 10 XRP on proof
+        rule.configure(id, EXCHANGE, 10_000_000, req, expected, 0, ""); // waits forever, no fallback
         vm.stopPrank();
     }
 

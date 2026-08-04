@@ -91,7 +91,7 @@ export const RULES = {
   // FdcVerification doesn't have) and, worse, could be released by ANYONE with an attestation of any
   // API returning the same value — it bound only the response, not the request. This one pins the whole
   // request. See backend/src/rules/ConditionalRule.sol.
-  escrow: "0xC96960e0ec98f0cf839E01B13922deb7E8edF2f2",
+  escrow: "0x2d8517BC464C70c21bBDBA48d3166a77A5019E77",
   // Unified FXRP round-trip: mint XRP->FXRP to your OWN Flare Smart Account (computed on-chain, not
   // configurable), then vault ops + redeem-home; transferring FXRP out is blocked. Supersedes the two
   // separate fxrpMint (0xaa0405f9…) + fxrpDefi (0xB5Ab70B4…) rules — see LEGACY_RULE_NAMES.
@@ -344,12 +344,17 @@ export const RULE_ABIS = {
         { name: "postProcessJq", type: "string" }, { name: "abiSignature", type: "string" },
       ] },
       { name: "expectedHash", type: "bytes32" },
+      { name: "deadline", type: "uint256" },
+      { name: "fallbackRecipient", type: "string" },
     ], outputs: [] },
     { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
     { type: "function", name: "conditionOf", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [
       { name: "recipient", type: "bytes32" }, { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
-      { name: "expectedHash", type: "bytes32" }, { name: "spent", type: "uint256" }, { name: "released", type: "bool" }, { name: "active", type: "bool" },
+      { name: "expectedHash", type: "bytes32" }, { name: "deadline", type: "uint256" },
+      { name: "fallbackRecipient", type: "bytes32" }, { name: "spent", type: "uint256" },
+      { name: "released", type: "bool" }, { name: "active", type: "bool" },
     ] },
+    { type: "function", name: "isExpired", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "bool" }] },
   ],
   // Unified FXRP: mint half (mint into your own on-chain-computed FSA personal account) + DeFi half
   // (vault ops + redeem-home). `personalAccountOf` is the only mint target — nothing to configure.

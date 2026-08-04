@@ -168,7 +168,7 @@ function AccountSkeleton() {
  * Exchange is fully translated from config; other rules show their gist until per-policy detail is added.
  */
 type Recip = { address: string; requireTag: boolean; tag: number };
-type Escrow = { recipient: string; maxAmount: string; released: boolean; condition?: string };
+type Escrow = { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string };
 type RuleCfg = { recipients?: Recip[]; capDrops?: string; limit?: Limit; escrow?: Escrow | null };
 
 function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
@@ -223,6 +223,9 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
       can.push(<>Pay <span className="font-mono text-mist-200">{addr(e.recipient)}</span>, up to <span className="text-mist-200">{formatDrops(BigInt(e.maxAmount))}</span>{e.condition ? <> — once <span className="text-mist-200">{e.condition}</span> is proven</> : " — once the condition is proven"}</>);
       if (e.released) can.push(<><span className="text-allow-500">Condition proven ✓</span> — it can pay now</>);
       else cant.push("Pay anything at all — until the condition is proven");
+      if (e.deadline && e.deadline !== "0" && e.fallback) {
+        can.push(<>Return the funds to <span className="font-mono text-mist-200">{addr(e.fallback)}</span> if that hasn&rsquo;t happened by <span className="text-mist-200">{new Date(Number(e.deadline) * 1000).toLocaleDateString(undefined, { timeZone: "UTC" })}</span></>);
+      }
       cant.push("Pay anyone else");
     } else {
       notSetUp = !loading;

@@ -28,7 +28,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const RPC = process.env.RPC_URL || "https://coston2-api.flare.network/ext/C/rpc";
 const KEY = process.env.EXECUTOR_KEY;
-const RULE = process.env.CONDITIONAL_RULE || "0xC96960e0ec98f0cf839E01B13922deb7E8edF2f2";
+const RULE = process.env.CONDITIONAL_RULE || "0x2d8517BC464C70c21bBDBA48d3166a77A5019E77";
 const EXPLORER = process.env.COSTON2_EXPLORER_API || "https://coston2-explorer.flare.network/api";
 const POLL_MS = (Number(process.env.POLL_SECONDS) || 60) * 1000;
 const VERIFIER_URL = (process.env.VERIFIER_URL || "https://fdc-verifiers-testnet.flare.network").replace(/\/$/, "");
@@ -108,7 +108,9 @@ const RULE_ABI = [
   { type: "function", name: "requestHashOf", stateMutability: "pure", inputs: [{ name: "requestBody", ...REQ_ABI }], outputs: [{ type: "bytes32" }] },
   { type: "function", name: "conditionOf", stateMutability: "view", inputs: [{ type: "bytes32" }],
     outputs: [{ name: "recipient", type: "bytes32" }, { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
-      { name: "expectedHash", type: "bytes32" }, { name: "spent", type: "uint256" }, { name: "released", type: "bool" }, { name: "active", type: "bool" }] },
+      { name: "expectedHash", type: "bytes32" }, { name: "deadline", type: "uint256" },
+      { name: "fallbackRecipient", type: "bytes32" }, { name: "spent", type: "uint256" },
+      { name: "released", type: "bool" }, { name: "active", type: "bool" }] },
   { type: "function", name: "release", stateMutability: "nonpayable",
     inputs: [{ name: "walletId", type: "bytes32" }, { name: "proof", type: "tuple", components: [{ name: "merkleProof", type: "bytes32[]" }, { name: "data", ...RESP_ABI }] }], outputs: [] },
   // Carries the FULL request — this is what makes a watcher possible without any off-chain registry.
@@ -259,9 +261,14 @@ async function watch(pub, wallet) {
       for (const c of configs) {
        // Isolate each account: a flaky RPC/DA/verifier call for one must not abort the whole tick.
        try {
-        const [, , , expectedHash, , released, active] = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [c.walletId] });
+        const [, , , expectedHash, deadline, , , released, active] = await pub.readContract({ address: RULE, abi: RULE_ABI, functionName: "conditionOf", args: [c.walletId] });
         const short = c.walletId.slice(0, 10);
         if (!active || released) { pending.delete(c.walletId); continue; }
+        // Past its deadline the rule refuses release(), so attesting would just burn a fee.
+        if (deadline !== 0n && BigInt(Math.floor(Date.now() / 1000)) > deadline) {
+          if (pending.delete(c.walletId)) console.log(`[watch] ${short}… deadline passed unproven — no longer attesting`);
+          continue;
+        }
 
         // Already waiting on a round? Just look for the proof — never re-request.
         const p = pending.get(c.walletId);
