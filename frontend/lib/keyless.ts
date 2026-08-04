@@ -395,6 +395,31 @@ export const CONDITION_TEMPLATES = {
       abiSignature: BOOL_SIG,
     }),
   },
+  // Parametric-trigger condition: "pay out if it freezes". Mirrors Flare's own weather-insurance example
+  // (flare-hardhat-starter contracts/weatherInsurance), but deliberately on Open-Meteo rather than
+  // OpenWeatherMap: OWM needs an `appid`, and a pinned request is published in full in the
+  // ConditionConfigured event — so an API key would be on-chain for anyone to read. Open-Meteo needs none.
+  temperatureBelow: {
+    name: "Temperature drops below",
+    unit: "°C at lat,lon — e.g. 5 @ 51.5,-0.12",
+    placeholder: "5 @ 51.5,-0.12",
+    describe: (v: string) => {
+      const [t, loc] = v.split("@").map((x) => x.trim());
+      return `the temperature at ${loc ?? "the location"} is at or below ${t}°C`;
+    },
+    build: (v: string): ConditionRequest => {
+      const [t, loc] = v.split("@").map((x) => x.trim());
+      const [lat, lon] = (loc ?? "").split(",").map((x) => x.trim());
+      return {
+        url: "https://api.open-meteo.com/v1/forecast",
+        httpMethod: "GET", headers: "{}",
+        queryParams: JSON.stringify({ latitude: lat, longitude: lon, current: "temperature_2m" }),
+        body: "{}",
+        postProcessJq: `{ok: (.current.temperature_2m <= ${Number(t)})}`,
+        abiSignature: BOOL_SIG,
+      };
+    },
+  },
   githubIssueClosed: {
     name: "A GitHub issue is closed",
     unit: "owner/repo#number",

@@ -66,6 +66,17 @@ export const CONDITIONS = {
     postProcessJq: `{ok: ((.data.amount|tonumber) >= ${usd})}`,
     abiSignature: BOOL_SIG,
   }),
+  // Parametric trigger, mirroring Flare's weather-insurance example — but on Open-Meteo (no API key;
+  // OpenWeatherMap's appid would end up published on-chain in the ConditionConfigured event).
+  temperatureBelow: (celsius, lat, lon) => ({
+    label: `temperature at ${lat},${lon} is at or below ${celsius}C`,
+    url: "https://api.open-meteo.com/v1/forecast",
+    httpMethod: "GET", headers: "{}",
+    queryParams: JSON.stringify({ latitude: String(lat), longitude: String(lon), current: "temperature_2m" }),
+    body: "{}",
+    postProcessJq: `{ok: (.current.temperature_2m <= ${celsius})}`,
+    abiSignature: BOOL_SIG,
+  }),
   githubIssueClosed: (repo, num) => ({
     label: `${repo}#${num} is closed (milestone complete)`,
     url: `https://api.github.com/repos/${repo}/issues/${num}`,
