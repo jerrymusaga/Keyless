@@ -116,8 +116,10 @@ export const DEMOS: Demo[] = [
   {
     key: "escrow",
     name: "Conditional",
-    // Configured on the live ConditionalRule against a REAL pinned API (CoinGecko XRP/USD). The threshold
-    // is above today's price, so the condition genuinely hasn't been met — the refusal below is real.
+    // Configured on the live ConditionalRule against a REAL pinned API (Coinbase XRP-USD spot). The
+    // threshold is above today's price, so the condition genuinely hasn't been met — the refusal below is
+    // real. Coinbase rather than CoinGecko: attestation providers each fetch the API and must agree, and
+    // CoinGecko's rate limiting means requests against it never reach consensus.
     walletId: "0x03a0009e67a07f1ca58024123cf5a83619e9aac3f54813637cfc99fc4e2062c7",
     rule: RULES.escrow,
     config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves XRP is worth at least $5.",
