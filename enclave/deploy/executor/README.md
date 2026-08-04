@@ -1,4 +1,36 @@
-# FXRP mint executor
+# Keyless executors
+
+Two permissionless watchers live here. Both FDC-attest a real-world fact and complete a step the user's
+own policy already authorised — neither can sign anything on a user's behalf, and neither needs privileged
+knowledge: what each account is waiting on is readable on-chain.
+
+| `WATCHER` | Completes | Why it's needed |
+|---|---|---|
+| `mint` (default) | FXRP direct mints | Flare relays FSA vault deposit/redeem, but **not** `executeDirectMinting` — without this a mint waits for a random bot. |
+| `conditional` | Conditional-policy releases | An account stays locked until someone proves its condition. This is what makes it unlock by itself. |
+
+## Deploy on Railway (one service per watcher)
+
+Deploy this same root **twice**; `npm start` reads `WATCHER` to decide which one a service is.
+
+```
+Root directory : enclave/deploy/executor
+Start command  : npm start        (the default — no need to set it)
+
+Service A  WATCHER=mint          EXECUTOR_KEY=0x…
+Service B  WATCHER=conditional   EXECUTOR_KEY=0x…
+```
+
+`EXECUTOR_KEY` is any funded Coston2 key — no special role. Each watcher pays a small FDC attestation fee
+per job; the mint watcher earns the executor fee back, so it is roughly self-funding. Everything else
+(verifier, DA layer, rule addresses) has a working default.
+
+Neither watcher spends a fee speculatively: the conditional one previews the answer for free via the
+verifier's `prepareResponse` first, and the mint one only acts on deposits it can see on the ledger.
+
+---
+
+## FXRP mint executor
 
 Completes a Keyless **FXRP mint**. After a `FxrpMintRule` account pays the FAssets Core Vault (an XRPL
 payment carrying the `DIRECT_MINTING` memo — see `backend/src/rules/FxrpMintRule.sol`), one permissionless
