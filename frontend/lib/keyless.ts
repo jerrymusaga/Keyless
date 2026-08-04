@@ -383,13 +383,15 @@ export const CONDITION_TEMPLATES = {
     unit: "USD",
     placeholder: "1",
     describe: (v: string) => `XRP is worth at least $${v}`,
-    // NB the query MUST go in queryParams, not the url — the verifier can't fetch it inline.
+    // Coinbase, NOT CoinGecko. Every attestation provider fetches the API independently and they must
+    // agree; CoinGecko's free tier throttles them, so requests against it never reached consensus —
+    // measured directly: two attestations submitted seconds apart, Coinbase returned a proof in ~90s
+    // while CoinGecko returned none at all. Whatever API a condition pins has to tolerate many
+    // independent fetchers. (Query params must go in queryParams, never inline in the url.)
     build: (v: string): ConditionRequest => ({
-      url: "https://api.coingecko.com/api/v3/simple/price",
-      httpMethod: "GET", headers: "{}",
-      queryParams: JSON.stringify({ ids: "ripple", vs_currencies: "usd" }),
-      body: "{}",
-      postProcessJq: `{ok: (.ripple.usd >= ${Number(v)})}`,
+      url: "https://api.coinbase.com/v2/prices/XRP-USD/spot",
+      httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+      postProcessJq: `{ok: ((.data.amount|tonumber) >= ${Number(v)})}`,
       abiSignature: BOOL_SIG,
     }),
   },

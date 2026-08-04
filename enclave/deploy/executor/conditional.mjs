@@ -56,13 +56,14 @@ const BOOL_SIG = '{"components":[{"internalType":"bool","name":"ok","type":"bool
 /** The condition templates a Keyless account can pin. Each is a REAL public API; jq carries the predicate,
  *  so the attested answer is a plain boolean and the committed value is always keccak(abi.encode(true)). */
 export const CONDITIONS = {
+  // Coinbase, NOT CoinGecko: providers each fetch the API and must agree, and CoinGecko's free tier
+  // throttles them — measured, a CoinGecko attestation never reached consensus while a Coinbase one
+  // submitted seconds later returned a proof in ~90s.
   xrpPriceAbove: (usd) => ({
     label: `XRP price is at or above $${usd}`,
-    url: "https://api.coingecko.com/api/v3/simple/price",
-    httpMethod: "GET", headers: "{}",
-    queryParams: JSON.stringify({ ids: "ripple", vs_currencies: "usd" }),
-    body: "{}",
-    postProcessJq: `{ok: (.ripple.usd >= ${usd})}`,
+    url: "https://api.coinbase.com/v2/prices/XRP-USD/spot",
+    httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+    postProcessJq: `{ok: ((.data.amount|tonumber) >= ${usd})}`,
     abiSignature: BOOL_SIG,
   }),
   githubIssueClosed: (repo, num) => ({
