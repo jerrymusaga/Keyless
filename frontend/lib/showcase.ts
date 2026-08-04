@@ -122,10 +122,11 @@ export const DEMOS: Demo[] = [
     // CoinGecko's rate limiting means requests against it never reach consensus.
     walletId: "0x03a0009e67a07f1ca58024123cf5a83619e9aac3f54813637cfc99fc4e2062c7",
     rule: RULES.escrow,
-    config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves XRP is worth at least $5.",
-    scene: "A payment that waits on the real world. Flare hasn't proven the condition yet, so nothing can leave.",
+    config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves XRP is worth at least $5. If that hasn't happened by 31 Jan 2027, the funds return to the payer instead.",
+    scene: "A payment that waits on the real world. Flare hasn't proven the condition yet, so nothing can leave — not even back to the payer.",
     presets: [
       { label: "Try to pay the supplier now", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 50, attack: true },
+      { label: "Try to take it back early", recipient: "randbAijaVXWYaMxLEvSv8twud84xUF3dv", amountXrp: 50, attack: true },
     ],
   },
 ];
