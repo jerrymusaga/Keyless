@@ -170,14 +170,32 @@ async function peek(cond) {
   return j.response.responseBody.abiEncodedData;
 }
 
-/** Fetch an attestation proof for a request in a given round, or null if it isn't there. */
-async function fetchProof(abiEncodedRequest, round) {
-  const r = await fetch(`${DA_LAYER_URL}/api/v1/fdc/proof-by-request-round-raw`, {
+/** Fetch an attestation proof for a request in one specific round, or null if it isn't there. */
+async function fetchProofInRound(abiEncodedRequest, round) {
+  const j = await fetchJson(`${DA_LAYER_URL}/api/v1/fdc/proof-by-request-round-raw`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ votingRoundId: round, requestBytes: abiEncodedRequest }),
   });
-  const j = await r.json().catch(() => ({}));
   return j?.response_hex ? j : null;
+}
+
+/**
+ * Find the proof for a request near a round. We can't just check the round WE submitted in: release() is
+ * permissionless, so several watchers may be running, and the FDC deduplicates identical requests — only
+ * the first one submitted gets attested, and everyone else's round stays empty forever. Whoever lost the
+ * race would otherwise poll its own round indefinitely, re-request, get deduplicated again, and never
+ * release. A proof stays valid regardless of who asked for it, so scanning a small window around the round
+ * finds the winner's proof and lets any watcher finish the job. (Also absorbs an off-by-one at a round
+ * boundary.)
+ */
+async function fetchProof(abiEncodedRequest, round, span = 3) {
+  for (let d = 0; d <= span; d++) {
+    for (const r of d === 0 ? [round] : [round - d, round + d]) {
+      const hit = await fetchProofInRound(abiEncodedRequest, r);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 /** Submit `proof` to release the account. Returns the tx hash, or null if the world said "not yet". */
