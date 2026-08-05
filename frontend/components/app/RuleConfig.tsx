@@ -968,6 +968,15 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   }, [walletId]);
   useEffect(() => { load(); }, [load]);
 
+  // The release happens off-screen — a watcher proves the condition a minute or two later — so poll while
+  // we're still waiting. Without this the panel sits on "Waiting on proof" forever and the user has to
+  // refresh to discover the payout unlocked, which is the whole moment.
+  useEffect(() => {
+    if (!onchain?.active || onchain.released) return;
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, [onchain?.active, onchain?.released, load]);
+
   // Ask the verifier what it would attest for the condition being composed — free, and the same
   // fetch + transform the real attestation runs, so it's a faithful preview and not a guess.
   const check = useCallback(async (v: Record<string, string>) => {
@@ -1045,7 +1054,10 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
           {onchain.released ? (
             <><span className="font-medium">Proven ✓</span> — the condition was met and attested on-chain. This account can now pay its payee, up to {formatDrops(onchain.maxAmount)}.</>
           ) : (
-            <><span className="font-medium">Waiting on proof.</span> This account can&rsquo;t pay anyone until Flare attests the condition. It unlocks on its own when the world says yes.</>
+            <span className="flex items-center gap-2">
+              <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
+              <span><span className="font-medium">Waiting on proof.</span> This account can&rsquo;t pay anyone — not the payee, not you — until Flare attests the condition. It unlocks by itself, usually within a couple of minutes of becoming true.</span>
+            </span>
           )}
         </Notice>
       )}
