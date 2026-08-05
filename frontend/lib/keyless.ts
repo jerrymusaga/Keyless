@@ -382,78 +382,86 @@ export type ConditionRequest = {
   body: string; postProcessJq: string; abiSignature: string;
 };
 
+/** One input a condition template asks for. Templates declare their fields so the UI can render a
+ *  labelled control per value instead of asking someone to encode everything into one cryptic string. */
+export type ConditionField = {
+  key: string;
+  label: string;
+  placeholder?: string;
+  kind?: "text" | "number" | "select";
+  options?: { value: string; label: string }[];
+  width?: "sm" | "md" | "lg";
+};
+
 export const CONDITION_TEMPLATES = {
   xrpPrice: {
     name: "XRP price reaches",
-    unit: "USD",
-    placeholder: "1",
-    describe: (v: string) => `XRP is worth at least $${v}`,
+    fields: [{ key: "usd", label: "USD", kind: "number", placeholder: "1", width: "sm" }] as ConditionField[],
+    describe: (v: Record<string, string>) => `XRP is worth at least $${v.usd}`,
     // Coinbase, NOT CoinGecko. Every attestation provider fetches the API independently and they must
     // agree; CoinGecko's free tier throttles them, so requests against it never reached consensus —
     // measured directly: two attestations submitted seconds apart, Coinbase returned a proof in ~90s
     // while CoinGecko returned none at all. Whatever API a condition pins has to tolerate many
     // independent fetchers. (Query params must go in queryParams, never inline in the url.)
-    build: (v: string): ConditionRequest => ({
+    build: (v: Record<string, string>): ConditionRequest => ({
       url: "https://api.coinbase.com/v2/prices/XRP-USD/spot",
       httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
-      postProcessJq: `{ok: ((.data.amount|tonumber) >= ${Number(v)})}`,
+      postProcessJq: `{ok: ((.data.amount|tonumber) >= ${Number(v.usd)})}`,
       abiSignature: BOOL_SIG,
     }),
   },
-  // Parametric-trigger condition: "pay out if it freezes". Mirrors Flare's own weather-insurance example
-  // (flare-hardhat-starter contracts/weatherInsurance), but deliberately on Open-Meteo rather than
+  // Parametric trigger, mirroring Flare's own weather-insurance example — but on Open-Meteo rather than
   // OpenWeatherMap: OWM needs an `appid`, and a pinned request is published in full in the
-  // ConditionConfigured event — so an API key would be on-chain for anyone to read. Open-Meteo needs none.
-  temperatureBelow: {
-    name: "Temperature drops below",
-    unit: "°C at lat,lon — e.g. 5 @ 51.5,-0.12",
-    placeholder: "5 @ 51.5,-0.12",
-    describe: (v: string) => {
-      const [t, loc] = v.split("@").map((x) => x.trim());
-      return `the temperature at ${loc ?? "the location"} is at or below ${t}°C`;
-    },
-    build: (v: string): ConditionRequest => {
-      const [t, loc] = v.split("@").map((x) => x.trim());
-      const [lat, lon] = (loc ?? "").split(",").map((x) => x.trim());
-      return {
-        url: "https://api.open-meteo.com/v1/forecast",
-        httpMethod: "GET", headers: "{}",
-        queryParams: JSON.stringify({ latitude: lat, longitude: lon, current: "temperature_2m" }),
-        body: "{}",
-        postProcessJq: `{ok: (.current.temperature_2m <= ${Number(t)})}`,
-        abiSignature: BOOL_SIG,
-      };
-    },
+  // ConditionConfigured event, so an API key would be on-chain for anyone to read. Open-Meteo needs none.
+  temperature: {
+    name: "Temperature at a place",
+    fields: [
+      { key: "dir", label: "", kind: "select", width: "md", options: [
+        { value: "below", label: "drops to or below" },
+        { value: "above", label: "rises to or above" },
+      ] },
+      { key: "celsius", label: "°C", kind: "number", placeholder: "5", width: "sm" },
+      { key: "lat", label: "latitude", kind: "number", placeholder: "51.5", width: "sm" },
+      { key: "lon", label: "longitude", kind: "number", placeholder: "-0.12", width: "sm" },
+    ] as ConditionField[],
+    describe: (v: Record<string, string>) =>
+      `the temperature at ${v.lat}, ${v.lon} ${v.dir === "above" ? "reaches" : "drops to"} ${v.celsius}°C`,
+    build: (v: Record<string, string>): ConditionRequest => ({
+      url: "https://api.open-meteo.com/v1/forecast",
+      httpMethod: "GET", headers: "{}",
+      queryParams: JSON.stringify({ latitude: v.lat, longitude: v.lon, current: "temperature_2m" }),
+      body: "{}",
+      postProcessJq: `{ok: (.current.temperature_2m ${v.dir === "above" ? ">=" : "<="} ${Number(v.celsius)})}`,
+      abiSignature: BOOL_SIG,
+    }),
   },
   githubIssueClosed: {
     name: "A GitHub issue is closed",
-    unit: "owner/repo#number",
-    placeholder: "flare-foundation/fassets#1",
-    describe: (v: string) => `${v} is closed`,
-    build: (v: string): ConditionRequest => {
-      const [repo, num] = v.split("#");
-      return {
-        url: `https://api.github.com/repos/${repo}/issues/${num}`,
-        httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
-        postProcessJq: '{ok: (.state == "closed")}',
-        abiSignature: BOOL_SIG,
-      };
-    },
+    fields: [
+      { key: "repo", label: "repository", placeholder: "owner/repo", width: "lg" },
+      { key: "num", label: "issue #", kind: "number", placeholder: "42", width: "sm" },
+    ] as ConditionField[],
+    describe: (v: Record<string, string>) => `${v.repo}#${v.num} is closed`,
+    build: (v: Record<string, string>): ConditionRequest => ({
+      url: `https://api.github.com/repos/${v.repo}/issues/${v.num}`,
+      httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+      postProcessJq: '{ok: (.state == "closed")}',
+      abiSignature: BOOL_SIG,
+    }),
   },
   githubPrMerged: {
     name: "A GitHub pull request is merged",
-    unit: "owner/repo#number",
-    placeholder: "flare-foundation/fassets#1",
-    describe: (v: string) => `${v} is merged`,
-    build: (v: string): ConditionRequest => {
-      const [repo, num] = v.split("#");
-      return {
-        url: `https://api.github.com/repos/${repo}/pulls/${num}`,
-        httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
-        postProcessJq: "{ok: (.merged == true)}",
-        abiSignature: BOOL_SIG,
-      };
-    },
+    fields: [
+      { key: "repo", label: "repository", placeholder: "owner/repo", width: "lg" },
+      { key: "num", label: "PR #", kind: "number", placeholder: "42", width: "sm" },
+    ] as ConditionField[],
+    describe: (v: Record<string, string>) => `${v.repo}#${v.num} is merged`,
+    build: (v: Record<string, string>): ConditionRequest => ({
+      url: `https://api.github.com/repos/${v.repo}/pulls/${v.num}`,
+      httpMethod: "GET", headers: "{}", queryParams: "{}", body: "{}",
+      postProcessJq: "{ok: (.merged == true)}",
+      abiSignature: BOOL_SIG,
+    }),
   },
 } as const;
 export type ConditionKey = keyof typeof CONDITION_TEMPLATES;

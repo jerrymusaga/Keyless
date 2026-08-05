@@ -948,7 +948,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [recipient, setRecipient] = useState("");
   const [cap, setCap] = useState("");
   const [kind, setKind] = useState<ConditionKey>("xrpPrice");
-  const [value, setValue] = useState("");
+  const [vals, setVals] = useState<Record<string, string>>({});
   const [live, setLive] = useState<{ ok: boolean; error?: string } | null>(null);
   const [deadline, setDeadline] = useState(""); // yyyy-mm-dd; blank = waits forever
   const [fallback, setFallback] = useState("");
@@ -959,15 +959,18 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
 
   const load = useCallback(async () => {
     try {
-      const c = await publicClient.readContract({ address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never, functionName: "conditionOf", args: [walletId] }) as readonly [string, bigint, string, string, bigint, boolean, boolean];
-      setOnchain({ maxAmount: c[1], released: c[5], active: c[6] });
+      const c = await publicClient.readContract({ address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never, functionName: "conditionOf", args: [walletId] }) as readonly [string, bigint, string, string, bigint, string, bigint, boolean, boolean];
+      // Tuple order: recipient, maxAmount, requestHash, expectedHash, deadline, fallbackRecipient,
+      // spent, released, active. (Reading the pre-deadline indices here rendered `spent` as "active",
+      // which leaked a stray "0" into the panel.)
+      setOnchain({ maxAmount: c[1], released: c[7], active: c[8] });
     } catch { /* transient */ }
   }, [walletId]);
   useEffect(() => { load(); }, [load]);
 
   // Ask the verifier what it would attest for the condition being composed — free, and the same
   // fetch + transform the real attestation runs, so it's a faithful preview and not a guess.
-  const check = useCallback(async (v: string) => {
+  const check = useCallback(async (v: Record<string, string>) => {
     const res = await fetch("/api/condition", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ request: tpl.build(v) }),
@@ -978,24 +981,32 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
 
   // Check as they type (debounced) so the readout is just *there* — nobody should have to know to press
   // a button to avoid locking funds against a condition that can never resolve.
+  // Seed any select with its first option, so "complete" doesn't wait on a control nobody touched.
   useEffect(() => {
-    const v = value.trim();
-    if (!v) { setLive(null); return; }
+    const seed: Record<string, string> = {};
+    for (const f of tpl.fields) if (f.kind === "select" && !vals[f.key]) seed[f.key] = f.options?.[0]?.value ?? "";
+    if (Object.keys(seed).length) setVals((m) => ({ ...seed, ...m }));
+  }, [tpl, vals]);
+
+  const complete = tpl.fields.every((f) => (vals[f.key] ?? "").trim());
+
+  useEffect(() => {
+    if (!complete) { setLive(null); return; }
     setChecking(true);
     const t = setTimeout(async () => {
-      try { setLive(await check(v)); }
+      try { setLive(await check(vals)); }
       catch (e) { setLive({ ok: false, error: e instanceof Error ? e.message : String(e) }); }
       finally { setChecking(false); }
     }, 700);
     return () => { clearTimeout(t); setChecking(false); };
-  }, [value, check]);
+  }, [vals, complete, check]);
 
   const configure = async () => {
     let drops: bigint;
     try {
       assertXrpl(recipient);
       drops = xrpToDrops(cap);
-      if (!value.trim()) throw new Error("fill in the condition");
+      if (!complete) throw new Error("fill in every part of the condition");
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
     }
@@ -1010,7 +1021,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
     // Never let someone lock funds against a condition that can't be read — that would strand the account
     // with no way to ever unlock it. A condition that's merely *false* is fine: that's the whole point.
     try {
-      const v = await check(value.trim());
+      const v = await check(vals);
       if (v.error) {
         setLive(v);
         return alert(`That condition can't be read: ${v.error}\n\nCheck the details — saving it would lock this account against something that can never be proven.`);
@@ -1021,8 +1032,8 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
     }
     const ok = await run(
       RULES.escrow as `0x${string}`, RULE_ABIS.escrow, "configure",
-      [walletId, recipient.trim(), drops, tpl.build(value.trim()), EXPECTED_TRUE, deadlineTs, deadlineTs === 0n ? "" : fallback.trim()],
-      `Set. This account can't pay until ${tpl.describe(value.trim())} — proven on-chain by Flare.`,
+      [walletId, recipient.trim(), drops, tpl.build(vals), EXPECTED_TRUE, deadlineTs, deadlineTs === 0n ? "" : fallback.trim()],
+      `Set. This account can't pay until ${tpl.describe(vals)} — proven on-chain by Flare.`,
     );
     if (ok) { load(); signalConfigChanged(); }
   };
@@ -1051,15 +1062,42 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
         <div className="flex flex-wrap gap-2">
           <select
             value={kind}
-            onChange={(e) => { setKind(e.target.value as ConditionKey); setValue(""); setLive(null); }}
+            onChange={(e) => { setKind(e.target.value as ConditionKey); setVals({}); setLive(null); }}
             className="rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none transition-colors focus:border-signal-500/60"
           >
             {(Object.keys(CONDITION_TEMPLATES) as ConditionKey[]).map((k) => (
               <option key={k} value={k}>{CONDITION_TEMPLATES[k].name}</option>
             ))}
           </select>
-          <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={tpl.placeholder} className="w-56" />
-          <span className="self-center text-[12px] text-mist-500">{tpl.unit}</span>
+
+          {/* One labelled control per value the template needs, rather than asking someone to encode
+              everything into a single cryptic string. */}
+          {tpl.fields.map((f) => {
+            const w = f.width === "lg" ? "w-52" : f.width === "md" ? "w-44" : "w-24";
+            const set = (x: string) => setVals((m) => ({ ...m, [f.key]: x }));
+            return (
+              <span key={f.key} className="flex items-center gap-1.5">
+                {f.kind === "select" ? (
+                  <select
+                    value={vals[f.key] ?? f.options?.[0]?.value ?? ""}
+                    onChange={(e) => set(e.target.value)}
+                    className={`${w} rounded-lg border hairline bg-ink-950 px-3 py-2.5 text-sm text-mist-100 outline-none transition-colors focus:border-signal-500/60`}
+                  >
+                    {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <Input
+                    value={vals[f.key] ?? ""}
+                    onChange={(e) => set(e.target.value)}
+                    placeholder={f.placeholder}
+                    inputMode={f.kind === "number" ? "decimal" : undefined}
+                    className={w}
+                  />
+                )}
+                {f.label && <span className="text-[12px] text-mist-500">{f.label}</span>}
+              </span>
+            );
+          })}
         </div>
       </Field>
 
