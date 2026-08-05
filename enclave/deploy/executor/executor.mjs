@@ -121,6 +121,23 @@ const ASSET_MGR_ABI = [{
   outputs: [],
 }];
 
+/**
+ * Fetch JSON, tolerating an infrastructure error page. The explorer and DA layer front-ends return
+ * plain-text gateway errors ("upstream connect error…") under load, and calling .json() on those throws —
+ * which previously took down a whole watcher tick. Returns null instead so the caller can just retry.
+ */
+async function fetchJson(url, init) {
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch { console.error(`[fetch] ${res.status} non-JSON from ${new URL(url).host}: ${text.slice(0, 60)}`); return null; }
+  } catch (e) {
+    console.error(`[fetch] ${e.message || e}`);
+    return null;
+  }
+}
+
 const type32 = (s) => pad(stringToHex(s), { dir: "right", size: 32 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // executeDirectMinting reverts PaymentAlreadyConfirmed() (selector 0x18dce79f) for an already-minted deposit.
@@ -188,7 +205,8 @@ async function completeMint(pub, wallet, txHash, log = console.log) {
 // Every Keyless account's XRPL address, from WalletCreated events -> walletId -> xrplAddressOf.
 async function keylessXrplAddresses(pub) {
   const url = `${EXPLORER}?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${KEYLESS_ACCOUNTS}&topic0=${WALLET_CREATED_TOPIC}`;
-  const json = await (await fetch(url, { cache: "no-store" })).json();
+  const json = await fetchJson(url, { cache: "no-store" });
+  if (!json) return null; // transient upstream failure — keep the previous account list, retry next tick
   const walletIds = [...new Set((json.result || []).map((l) => l.topics?.[1]).filter(Boolean))];
   const out = [];
   for (const wid of walletIds) {
@@ -226,8 +244,10 @@ async function watch(pub, wallet) {
   for (;;) {
     try {
       const addrs = await keylessXrplAddresses(pub);
+      if (!addrs) { await sleep(POLL_MS); continue; } // couldn't enumerate this tick; don't bootstrap on it
       let backlog = 0;
       for (const a of addrs) {
+       try {
         let hashes = [];
         try { hashes = await pendingMintTxs(a); } catch { /* XRPL RPC hiccup — try next loop */ }
         for (const h of hashes) {
@@ -243,6 +263,9 @@ async function watch(pub, wallet) {
             else console.error(`[watch] mint ${h} failed: ${e.message || e}`);
           }
         }
+       } catch (e) {
+        console.error(`[watch] ${a} tick failed (will retry): ${e.message || e}`);
+       }
       }
       if (!bootstrapped) { bootstrapped = true; console.log(`[watch] ${addrs.length} accounts, ${backlog} existing deposits skipped — watching for new mints. (Use the single-tx mode to backfill a specific one.)`); }
     } catch (e) {

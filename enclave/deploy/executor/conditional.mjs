@@ -118,8 +118,26 @@ const RULE_ABI = [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
     { name: "maxAmount", type: "uint256" }, { name: "requestHash", type: "bytes32" },
     { name: "expectedHash", type: "bytes32" }, { name: "request", ...REQ_ABI },
+    { name: "deadline", type: "uint256" }, { name: "fallbackRecipient", type: "string" },
   ] },
 ];
+
+/**
+ * Fetch JSON, tolerating an infrastructure error page. The explorer and DA layer front-ends return
+ * plain-text gateway errors ("upstream connect error…") under load, and calling .json() on those throws —
+ * which previously took down a whole watcher tick. Returns null instead so the caller can just retry.
+ */
+async function fetchJson(url, init) {
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch { console.error(`[fetch] ${res.status} non-JSON from ${new URL(url).host}: ${text.slice(0, 60)}`); return null; }
+  } catch (e) {
+    console.error(`[fetch] ${e.message || e}`);
+    return null;
+  }
+}
 
 const t32 = (s) => pad(stringToHex(s), { dir: "right", size: 32 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -224,8 +242,8 @@ const CONFIGURED_TOPIC = toEventSelector(RULE_ABI.find((f) => f.type === "event"
 /** Every configured condition, rebuilt from ConditionConfigured events (which carry the full request). */
 async function configuredConditions() {
   const url = `${EXPLORER}?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${RULE}&topic0=${CONFIGURED_TOPIC}`;
-  const j = await (await fetch(url, { cache: "no-store" })).json();
-  const logs = Array.isArray(j.result) ? j.result : [];
+  const j = await fetchJson(url, { cache: "no-store" });
+  const logs = Array.isArray(j?.result) ? j.result : [];
   const out = new Map(); // walletId -> latest config
   for (const l of logs) {
     try {
