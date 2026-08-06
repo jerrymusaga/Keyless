@@ -176,12 +176,12 @@ export const DEMOS: Demo[] = [
     walletId: "0x0eeb7caab035ac20471fca4662b7a6bc920c937d66fc0c4f5021179368aafac4",
     xrplAddress: "r33g8KFgJRe8zkqwv3vsr4A82vXKUebUiP",
     rule: RULES.scheduled,
-    config: "Pays exactly 500 XRP to one payee on the 1st of each month, 12 times, and nothing else.",
+    config: "Pays exactly 25 XRP to one payee on the 1st of each month, 12 times, and nothing else.",
     scene: "A standing order nobody can bend. The payee, the amount and the date are all pinned — try paying early, paying a bit more, or paying someone else.",
     presets: [
-      { label: "Pay the payee today", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 500, attack: true },
-      { label: "Shave 1 XRP off", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 499, attack: true },
-      { label: "Pay someone else instead", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 500, attack: true },
+      { label: "Pay the payee today", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 25, attack: true },
+      { label: "Shave 1 XRP off", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 24, attack: true },
+      { label: "Pay someone else instead", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 25, attack: true },
     ],
   },
   {

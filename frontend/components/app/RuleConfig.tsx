@@ -62,7 +62,7 @@ const ORDINAL = (n: number) => {
 };
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-type ScheduleLine = { recipient: string; amount: string; unit: number; offsetDays: number; runs: string };
+type ScheduleLine = { recipient: string; amount: string; unit: number; offsetDays: number; runs: string; startAt: string };
 type SavedLine = {
   amount: bigint; nextDue: number; runsLeft: number; unit: number; offsetDays: number; active: boolean;
 };
@@ -79,7 +79,7 @@ const fmtDate = (ts: number) =>
 
 function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
   const [lines, setLines] = useState<ScheduleLine[]>([
-    { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "" },
+    { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "", startAt: "" },
   ]);
   const [saved, setSaved] = useState<SavedLine[] | null>(null);
   const [next, setNext] = useState<{ dueAt: number; totalDrops: bigint } | null>(null);
@@ -125,7 +125,16 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         // rule refuses runs of 0 outright. Ask for the number here rather than let the chain say no.
         const runs = Number(l.runs);
         if (!Number.isInteger(runs) || runs < 1) throw new Error("say how many payments this should make");
-        payload.push({ recipient: l.recipient.trim(), amount: xrpToDrops(l.amount), unit: l.unit, offsetDays: l.offsetDays, runs, startAt: 0n });
+        // Blank means "the next one". A date is snapped forward to the next matching slot by the rule,
+        // so picking the 3rd for a monthly line still lands on the 1st — the schedule stays calendar-true.
+        let startAt = 0n;
+        if (l.startAt) {
+          const ts = Math.floor(new Date(`${l.startAt}T00:00:00Z`).getTime() / 1000);
+          if (!ts) throw new Error("that start date isn't valid");
+          if (ts < Math.floor(Date.now() / 1000)) throw new Error("the start date has already passed");
+          startAt = BigInt(ts);
+        }
+        payload.push({ recipient: l.recipient.trim(), amount: xrpToDrops(l.amount), unit: l.unit, offsetDays: l.offsetDays, runs, startAt });
       }
     } catch (e) {
       return alert(e instanceof Error ? e.message : String(e));
@@ -230,6 +239,14 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                 <Field label="How many times?" hint="Required — a schedule has to end">
                   <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-24" />
                 </Field>
+                <Field label="Starting from?" hint="Blank = the next one">
+                  <input
+                    type="date"
+                    value={l.startAt}
+                    onChange={(e) => set(i, { startAt: e.target.value })}
+                    className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                  />
+                </Field>
               </div>
               {lines.length > 1 && (
                 <button type="button" onClick={() => setLines((ls) => ls.filter((_, n) => n !== i))} className="text-[11px] text-mist-500 hover:text-refuse-500">
@@ -241,7 +258,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         })}
         <button
           type="button"
-          onClick={() => setLines((ls) => [...ls, { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "" }])}
+          onClick={() => setLines((ls) => [...ls, { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "", startAt: "" }])}
           className="text-[12px] text-signal-400 hover:text-signal-300"
         >
           + Another payment
