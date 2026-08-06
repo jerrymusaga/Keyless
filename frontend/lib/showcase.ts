@@ -6,10 +6,8 @@ import { ADDRESSES, RULES } from "./keyless";
 // now folded into ExchangeRule (allowlist == exchange with no tag/cap) and no longer a pickable template.
 // The contract stays deployed, so the read-only dry-run still faithfully demonstrates the allowlist
 // behaviour. Hardcoded here rather than via RULES since it's no longer in the template map.
-const DEPRECATED_ALLOWLIST_RULE = "0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2" as const;
 // The Spending-limit demo account was provisioned on RateLimitRule v1; the app now uses v2 (adds optional
 // allowlist + per-payment cap). The v1 contract stays deployed, so the read-only demo still works.
-const RATELIMIT_V1_RULE = "0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d" as const;
 
 /**
  * The engine behind the no-login showcase (/see). Each "try" is a READ-ONLY dry-run of the real
@@ -136,14 +134,16 @@ export type Demo = {
   presets: Scenario[];
 };
 
-/** The four demo accounts, pre-configured on-chain (see backend/script/SetupDemo). walletIds are
- *  deterministic (walletIdFor(deployer, fixed salt)), so they're stable. */
+/** The demo accounts, pre-configured on-chain. walletIds are deterministic (walletIdFor(deployer, fixed
+ *  salt)), so they're stable. Every one runs on the SAME rule deployment a new account gets today — the
+ *  first pair used to point at a retired AllowlistRule and RateLimit v1, on wallets that didn't even exist
+ *  on the current manager, so the page was proving contracts nobody is given any more. */
 export const DEMOS: Demo[] = [
   {
     key: "exchange",
     name: "Exchange & allowlist",
-    walletId: "0x3c555a3896ec2481f3ef5f5025f85fcc3bccafc2d9f8c8b3089442b931693a54",
-    rule: DEPRECATED_ALLOWLIST_RULE,
+    walletId: "0x9af6b2cd05b4db3079859565acfb0841af124e6b150aacf97c90f78df5db6630",
+    rule: RULES.exchange,
     config: "May only pay one allowlisted address: rw15K…VDMC (a demo exchange).",
     scene: "A savings account that can only ever pay your exchange. Try to send it somewhere else.",
     presets: [
@@ -154,14 +154,28 @@ export const DEMOS: Demo[] = [
   {
     key: "rateLimit",
     name: "Spending limit",
-    walletId: "0xdc2006bef11900f063e4b8d1f6d2d54d5214798aae5a8f6e2e5eec8ab6a1019a",
-    rule: RATELIMIT_V1_RULE,
+    walletId: "0xce79663f7ad7953383057a5dc98490e8e940c455b9b8556aea88ee443a04ae3e",
+    rule: RULES.rateLimit,
     config: "Allowlisted recipient + a cap of 10 XRP per day.",
     scene: "An allowance for a bot: it can spend to the allowlist, up to 10 XRP/day. Try to blow past it.",
     presets: [
       { label: "Spend 5 XRP to the exchange", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 5 },
       { label: "A hijacked bot tries 50 XRP", recipient: "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC", amountXrp: 50, attack: true },
       { label: "…and tries a new address", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 5, attack: true },
+    ],
+  },
+  {
+    key: "scheduled",
+    name: "Scheduled payments",
+    // A live schedule on the deployed rule: 500 XRP to one payee on the 1st of each month, 12 runs.
+    walletId: "0x0eeb7caab035ac20471fca4662b7a6bc920c937d66fc0c4f5021179368aafac4",
+    rule: RULES.scheduled,
+    config: "Pays exactly 500 XRP to one payee on the 1st of each month, 12 times, and nothing else.",
+    scene: "A standing order nobody can bend. The payee, the amount and the date are all pinned — try paying early, paying a bit more, or paying someone else.",
+    presets: [
+      { label: "Pay the payee today", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 500, attack: true },
+      { label: "Shave 1 XRP off", recipient: "rNayb1SABfnBH4MzuoAbKTsXu6kWeV6cHL", amountXrp: 499, attack: true },
+      { label: "Pay someone else instead", recipient: "rPdvC6ccq8hCdPKSPJkPmyZ4Mi1oG2FFkT", amountXrp: 500, attack: true },
     ],
   },
   {
