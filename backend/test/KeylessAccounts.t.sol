@@ -11,6 +11,8 @@ import {FxrpMintRule} from "../src/rules/FxrpMintRule.sol";
 import {FxrpDefiRule} from "../src/rules/FxrpDefiRule.sol";
 import {FxrpRule} from "../src/rules/FxrpRule.sol";
 import {ConditionalRule} from "../src/rules/ConditionalRule.sol";
+import {ScheduledRule} from "../src/rules/ScheduledRule.sol";
+import {CalendarLib} from "../src/lib/CalendarLib.sol";
 import {KeylessRuleBase} from "../src/rules/KeylessRuleBase.sol";
 import {ITeeExtensionRegistry} from "../src/interfaces/ITeeExtensionRegistry.sol";
 import {ITeeMachineRegistry} from "../src/interfaces/ITeeMachineRegistry.sol";
@@ -943,5 +945,287 @@ contract KeylessAccountsTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
         accounts.pay{value: FEE}(id, ATTACKER, 1_000_000, bytes32("steal"));
+    }
+
+    // --- ScheduledRule (payroll / DCA) ---------------------------------------
+
+    string constant PAYEE = "rALICEsalaryXXXXXXXXXXXXXXXXXXXXXXX";
+    // 1 Feb 2027, 00:00 UTC. Also a Monday, so month-start and week-start coincide and the weekly
+    // case can be checked against the same anchor.
+    uint64 constant FEB_2027 = 1801440000;
+
+    function _scheduled() internal returns (ScheduledRule r, bytes32 id) {
+        r = new ScheduledRule(address(accounts));
+        id = _wallet(alice, "payroll");
+        vm.prank(alice);
+        accounts.setRule(id, address(r));
+    }
+
+    function _monthly(string memory recipient, uint256 amount, uint32 runs)
+        internal
+        pure
+        returns (ScheduledRule.LineInput[] memory ls)
+    {
+        ls = new ScheduledRule.LineInput[](1);
+        ls[0] = ScheduledRule.LineInput({
+            recipient: recipient,
+            amount: amount,
+            unit: CalendarLib.CAL_MONTH,
+            offsetDays: 0,
+            runs: runs,
+            startAt: 0
+        });
+    }
+
+    function test_scheduled_paysOnTheDueDateAndNotBefore() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+
+        (uint64 due, uint256 owed) = r.nextRun(id);
+        assertEq(due, FEB_2027 + 28 days, "first run is 1 March");
+        assertEq(owed, 500_000_000);
+
+        // A day early is still refused.
+        vm.warp(due - 1);
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("run"));
+
+        vm.warp(due);
+        vm.prank(agent); // permissionless: anyone may trigger a due line
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("run"));
+    }
+
+    /// THE test. A trigger that has been dark for three months must pay exactly once on its return —
+    /// `nextDue += period` would leave the line in the past and fire three times in a row.
+    function test_scheduled_outageSkipsMissedRunsAndNeverAccrues() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+
+        // Nothing runs through March, April and May. It is now mid-June.
+        vm.warp(FEB_2027 + 135 days);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("catchup"));
+
+        // The single missed-window payment is all that is owed; the next is 1 July.
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("again"));
+
+        (uint64 due,) = r.nextRun(id);
+        assertGt(due, block.timestamp, "next run must be in the future, not backfilled");
+    }
+
+    function test_scheduled_amountIsExactNotACap() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        vm.warp(FEB_2027 + 28 days);
+
+        // Under a cap-style rule 499 XRP would sail through. Here only the pinned amount is a match —
+        // a hijacked trigger gets no discretion at all, in either direction.
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 499_000_000, bytes32("shave"));
+
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 501_000_000, bytes32("top up"));
+    }
+
+    function test_scheduled_unscheduledPayeeIsRefused() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        vm.warp(FEB_2027 + 28 days);
+
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, ATTACKER, 500_000_000, bytes32("steal"));
+    }
+
+    function test_scheduled_runsLeftExhaustsAndStops() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 2)); // "stop after 2 payments"
+
+        for (uint256 i = 0; i < 2; ++i) {
+            (uint64 due,) = r.nextRun(id);
+            vm.warp(due);
+            vm.prank(agent);
+            accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("run"));
+        }
+
+        vm.warp(block.timestamp + 60 days);
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("third"));
+
+        (uint64 dueAfter, uint256 owed) = r.nextRun(id);
+        assertEq(dueAfter, 0, "an exhausted schedule owes nothing");
+        assertEq(owed, 0);
+        assertFalse(r.hasUnlimitedLine(id));
+    }
+
+    function test_scheduled_hasUnlimitedLine_flagsTheLockFootgun() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        // The UI reads this to refuse locking: locked + endless = an irrevocable standing order.
+        assertTrue(r.hasUnlimitedLine(id));
+    }
+
+    function test_scheduled_offsetLandsOnTheFifteenth() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 0);
+        ls[0].offsetDays = 14;
+        vm.prank(alice);
+        r.configure(id, ls);
+
+        (uint64 due,) = r.nextRun(id);
+        assertEq(due, FEB_2027 + 14 days, "15 February, not 15 March: this month slot is still ahead");
+    }
+
+    function test_scheduled_offsetBeyondTheWindowIsRejected() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 0);
+        ls[0].offsetDays = 28; // would spill out of February
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "offset outside the window"));
+        r.configure(id, ls);
+    }
+
+    function test_scheduled_multipleLinesEachTrackTheirOwnSlot() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = new ScheduledRule.LineInput[](2);
+        ls[0] = ScheduledRule.LineInput(PAYEE, 500_000_000, CalendarLib.CAL_MONTH, 0, 0, 0);
+        ls[1] = ScheduledRule.LineInput(EXCHANGE, 300_000_000, CalendarLib.CAL_MONTH, 0, 0, 0);
+        vm.prank(alice);
+        r.configure(id, ls);
+
+        (uint64 due, uint256 owed) = r.nextRun(id);
+        assertEq(owed, 800_000_000, "both lines fall due the same day");
+
+        vm.warp(due);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("alice"));
+        // Paying Alice must not consume Bob's slot.
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, EXCHANGE, 300_000_000, bytes32("bob"));
+
+        // ...and neither can run twice in the same month.
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("twice"));
+    }
+
+    function test_scheduled_onlyOwnerConfigures_andLockFreezesTheSchedule() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 3));
+
+        vm.prank(bob);
+        vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
+        r.configure(id, _monthly(ATTACKER, 500_000_000, 0));
+
+        vm.prank(alice);
+        accounts.lockRule(id);
+
+        // A stolen control key can no longer add a payee or cancel the plan.
+        vm.prank(alice);
+        vm.expectRevert(KeylessRuleBase.Locked.selector);
+        r.configure(id, _monthly(ATTACKER, 1, 0));
+        vm.prank(alice);
+        vm.expectRevert(KeylessRuleBase.Locked.selector);
+        r.cancel(id);
+
+        // But the frozen schedule keeps paying.
+        (uint64 due,) = r.nextRun(id);
+        vm.warp(due);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("still runs"));
+    }
+
+    function test_scheduled_cancelStopsEverything() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        vm.prank(alice);
+        r.cancel(id);
+
+        vm.warp(FEB_2027 + 28 days);
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                KeylessRuleBase.Rejected.selector, "nothing scheduled is due for that recipient and amount"
+            )
+        );
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("after cancel"));
+    }
+
+    function test_scheduled_tooManyLinesIsRejected() public {
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        uint256 n = r.MAX_LINES() + 1;
+        ScheduledRule.LineInput[] memory ls = new ScheduledRule.LineInput[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            ls[i] = ScheduledRule.LineInput(PAYEE, 1, CalendarLib.CAL_MONTH, 0, 0, 0);
+        }
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "too many scheduled payments"));
+        r.configure(id, ls);
+    }
+
+    function test_scheduled_weeklyLandsOnMonday() public {
+        vm.warp(FEB_2027); // 1 Feb 2027 is a Monday
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 12); // "12 weeks of DCA"
+        ls[0].unit = CalendarLib.CAL_WEEK;
+        vm.prank(alice);
+        r.configure(id, ls);
+
+        (uint64 due,) = r.nextRun(id);
+        assertEq(due, FEB_2027 + 7 days, "the following Monday");
+        assertEq(uint256(due) / 86400 % 7, 4, "unix day 0 is a Thursday, so Mondays are day % 7 == 4");
     }
 }
