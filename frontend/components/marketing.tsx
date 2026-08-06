@@ -27,7 +27,7 @@ export function TrustBar() {
   );
 }
 
-const ORDER: RuleKey[] = ["exchange", "rateLimit", "fxrp", "escrow"];
+const ORDER: RuleKey[] = ["exchange", "rateLimit", "scheduled", "escrow", "fxrp"];
 
 export function Features() {
   return (
@@ -63,7 +63,7 @@ export function Features() {
 export function HowItWorks() {
   const steps = [
     { n: "1", t: "Create an account", d: "One click. The XRP key is generated inside a secure enclave — no seed phrase, no extension, and no human ever sees it." },
-    { n: "2", t: "Pick a rule", d: "Exchange-only, an agent allowance, a subscription, a conditional payout. The rule is the account's entire security surface." },
+    { n: "2", t: "Pick a rule", d: "Exchange-only, an agent allowance, a standing order, a payout that waits on a proven fact. The rule is the account's entire security surface." },
     { n: "3", t: "It can't be drained", d: "The key can only ever sign what the rule allows. Lock the rule and not even your own control key can change it." },
   ];
   return (

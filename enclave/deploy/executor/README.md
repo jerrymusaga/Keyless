@@ -8,10 +8,11 @@ knowledge: what each account is waiting on is readable on-chain.
 |---|---|---|
 | `mint` (default) | FXRP direct mints | Flare relays FSA vault deposit/redeem, but **not** `executeDirectMinting` — without this a mint waits for a random bot. |
 | `conditional` | Conditional-policy releases | An account stays locked until someone proves its condition. This is what makes it unlock by itself. |
+| `scheduled` | Standing orders falling due | A schedule is enforced on-chain but not *executed* there. Without this, a due payment waits for someone to press a button. |
 
 ## Deploy on Railway (one service per watcher)
 
-Deploy this same root **twice**; `npm start` reads `WATCHER` to decide which one a service is.
+Deploy this same root **once per watcher**; `npm start` reads `WATCHER` to decide which one a service is.
 
 ```
 Root directory : enclave/deploy/executor
@@ -19,14 +20,21 @@ Start command  : npm start        (the default — no need to set it)
 
 Service A  WATCHER=mint          EXECUTOR_KEY=0x…
 Service B  WATCHER=conditional   EXECUTOR_KEY=0x…
+Service C  WATCHER=scheduled     EXECUTOR_KEY=0x…
 ```
 
 `EXECUTOR_KEY` is any funded Coston2 key — no special role. Each watcher pays a small FDC attestation fee
 per job; the mint watcher earns the executor fee back, so it is roughly self-funding. Everything else
 (verifier, DA layer, rule addresses) has a working default.
 
-Neither watcher spends a fee speculatively: the conditional one previews the answer for free via the
-verifier's `prepareResponse` first, and the mint one only acts on deposits it can see on the ledger.
+No watcher spends a fee speculatively: the conditional one previews the answer for free via the
+verifier's `prepareResponse` first, the mint one only acts on deposits it can see on the ledger, and the
+scheduled one reads the account's XRP balance before attempting a run — `authorize` advances the schedule
+before the enclave submits, so paying from an account that can't cover it would burn the slot outright.
+
+The scheduled watcher is the one with no discretion at all: payee, amount and date are pinned on-chain, so
+the worst a hostile copy of it can do is run your payroll on time. That is why it is safe to let anyone
+run it — `pay` is permissionless precisely so an account never depends on us being up.
 
 ---
 
