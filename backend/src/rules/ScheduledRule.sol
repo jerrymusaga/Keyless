@@ -26,6 +26,10 @@ import {CalendarLib} from "../lib/CalendarLib.sol";
 ///         Pinning the amount means a fully compromised trigger can only do the thing you already asked
 ///         for.
 ///
+///      Every line carries a finite run count. That isn't a convenience — `cancel` is `notLocked`, so an
+///      endless line on a locked account would be an unstoppable standing order, and a rule cannot refuse
+///      a lock it never sees. Bounding the runs makes that state unreachable instead of merely discouraged.
+///
 ///      Known sharp edge, shared with RateLimitRule: `authorize` advances `nextDue` before the enclave
 ///      submits, so an underfunded payment burns its slot. That fails in the safe direction — a missed
 ///      run, never a double one — and is handled off-chain by not triggering a line the account can't
@@ -41,7 +45,7 @@ contract ScheduledRule is KeylessRuleBase {
         bytes32 payee; // keccak(recipient) — mappings stay non-enumerable, as in every other rule
         uint256 amount; // drops, EXACT
         uint64 nextDue; // unix seconds; nothing authorizes before this
-        uint32 runsLeft; // payments remaining; 0 = unlimited
+        uint32 runsLeft; // payments remaining; always finite (see configure)
         uint8 unit; // CalendarLib.CAL_DAY | CAL_WEEK | CAL_MONTH
         uint8 offsetDays; // into the window: 14 + CAL_MONTH = the 15th
         bool active;
@@ -54,7 +58,7 @@ contract ScheduledRule is KeylessRuleBase {
         uint256 amount;
         uint8 unit;
         uint8 offsetDays;
-        uint32 runs; // 0 = unlimited
+        uint32 runs; // must be > 0 — every schedule has to end
         uint64 startAt; // 0 = the next boundary from now; otherwise snapped forward to a boundary
     }
 
@@ -89,6 +93,11 @@ contract ScheduledRule is KeylessRuleBase {
         for (uint256 i = 0; i < lines.length; ++i) {
             LineInput calldata in_ = lines[i];
             if (in_.amount == 0) revert Rejected("amount is zero");
+            // Every schedule must terminate. Locking is irreversible and `cancel` is notLocked, so an
+            // endless line plus a lock would be an unstoppable standing order that empties the account.
+            // The rule can't refuse the lock itself — lock() lives in KeylessAccounts and knows nothing
+            // about lines — so the fix is to make the dangerous state impossible to configure.
+            if (in_.runs == 0) revert Rejected("say how many payments");
             if (bytes(in_.recipient).length == 0) revert Rejected("recipient is empty");
             if (in_.unit > CalendarLib.CAL_MONTH) revert Rejected("bad schedule unit");
             // Bounded so an offset can never spill into the next window — see CalendarLib.
@@ -115,8 +124,8 @@ contract ScheduledRule is KeylessRuleBase {
         emit ScheduleConfigured(walletId, lines.length);
     }
 
-    /// @notice Stop everything. Nothing further can be paid. (Blocked once the wallet is locked — see
-    ///         `hasUnlimitedLine`, which is why the UI must refuse to lock an endless schedule.)
+    /// @notice Stop everything. Nothing further can be paid. Blocked once the wallet is locked — which is
+    ///         safe precisely because every line is finite: a locked schedule always runs out.
     function cancel(bytes32 walletId) external onlyWalletOwner(walletId) notLocked(walletId) {
         delete linesOf[walletId];
         emit ScheduleCancelled(walletId);
@@ -140,12 +149,10 @@ contract ScheduledRule is KeylessRuleBase {
             // outage into a burst of back-payments the moment a trigger came back online.
             l.nextDue = uint64(block.timestamp).nextBoundaryAfter(l.unit, l.offsetDays);
 
-            if (l.runsLeft != 0) {
-                unchecked {
-                    l.runsLeft -= 1;
-                }
-                if (l.runsLeft == 0) l.active = false;
+            unchecked {
+                l.runsLeft -= 1;
             }
+            if (l.runsLeft == 0) l.active = false;
             emit LinePaid(walletId, i, amount, l.nextDue);
             return;
         }
@@ -158,16 +165,13 @@ contract ScheduledRule is KeylessRuleBase {
         return linesOf[walletId].length;
     }
 
-    /// @notice True while any line would run forever. Locking such a schedule makes it an irrevocable
-    ///         standing order that empties the account, and the rule cannot prevent that on its own:
-    ///         `configure`/`cancel` are already `notLocked`, and `lock()` lives in KeylessAccounts, which
-    ///         knows nothing about lines. So the refusal belongs in the UI, and this is the fact it reads.
-    function hasUnlimitedLine(bytes32 walletId) external view returns (bool) {
+    /// @notice Payments still to come across every line. A schedule always terminates, so this is what
+    ///         makes locking safe: the account can be frozen knowing exactly how much can ever leave.
+    function runsRemaining(bytes32 walletId) external view returns (uint256 total) {
         Line[] storage ls = linesOf[walletId];
         for (uint256 i = 0; i < ls.length; ++i) {
-            if (ls[i].active && ls[i].runsLeft == 0) return true;
+            if (ls[i].active) total += ls[i].runsLeft;
         }
-        return false;
     }
 
     /// @notice The soonest moment anything is payable, and how much the account needs by then. Lets the

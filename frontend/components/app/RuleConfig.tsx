@@ -85,7 +85,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
   const [saved, setSaved] = useState<SavedLine[] | null>(null);
   const [next, setNext] = useState<{ dueAt: number; totalDrops: bigint } | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
-  const [unlimited, setUnlimited] = useState(false);
+  const [runsLeft, setRunsLeft] = useState<number | null>(null);
   const { busy, msg, run } = useConfigAction();
 
   const load = useCallback(async () => {
@@ -101,7 +101,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
       setSaved(rows);
       const nr = (await publicClient.readContract({ address: rule, abi, functionName: "nextRun", args: [walletId] })) as readonly [bigint, bigint];
       setNext({ dueAt: Number(nr[0]), totalDrops: nr[1] });
-      setUnlimited((await publicClient.readContract({ address: rule, abi, functionName: "hasUnlimitedLine", args: [walletId] })) as boolean);
+      setRunsLeft(Number((await publicClient.readContract({ address: rule, abi, functionName: "runsRemaining", args: [walletId] })) as bigint));
     } catch { /* transient */ }
     // The whole point of knowing the future is being able to warn about it in advance.
     try {
@@ -122,8 +122,10 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
     try {
       for (const l of lines) {
         assertXrpl(l.recipient);
-        const runs = l.runs.trim() === "" ? 0 : Number(l.runs);
-        if (!Number.isInteger(runs) || runs < 0) throw new Error("how many times must be a whole number");
+        // Required, not optional: an endless schedule on a locked account would be unstoppable, so the
+        // rule refuses runs of 0 outright. Ask for the number here rather than let the chain say no.
+        const runs = Number(l.runs);
+        if (!Number.isInteger(runs) || runs < 1) throw new Error("say how many payments this should make");
         payload.push({ recipient: l.recipient.trim(), amount: xrpToDrops(l.amount), unit: l.unit, offsetDays: l.offsetDays, runs, startAt: 0n });
       }
     } catch (e) {
@@ -166,10 +168,10 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         </Notice>
       )}
 
-      {unlimited && (
-        <Notice tone="warn">
-          One of these runs forever. Don&rsquo;t lock this account until you set a number of payments —
-          locking an endless schedule makes it permanent, and it would pay until the account is empty.
+      {runsLeft !== null && runsLeft > 0 && (
+        <Notice tone="ok">
+          <span className="font-medium">{runsLeft} payment{runsLeft === 1 ? "" : "s"} left, then it stops.</span>{" "}
+          Every schedule has to end, so locking this account is safe: that is the most that can ever leave it.
         </Notice>
       )}
 
@@ -226,7 +228,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                     </select>
                   </Field>
                 )}
-                <Field label="How many times?" hint="Blank = until you stop it">
+                <Field label="How many times?" hint="Required — a schedule has to end">
                   <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-24" />
                 </Field>
               </div>
@@ -250,6 +252,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
       <p className="text-[12px] leading-relaxed text-mist-500">
         Saving replaces the whole schedule. Nothing can be paid early, nothing can be paid twice in the same{" "}
         {CAL[lines[0]?.unit ?? 2].label}, and nobody outside this list can be paid at all — including you.
+        Every line ends after the number of payments you set.
       </p>
 
       <div className="flex items-center gap-2">

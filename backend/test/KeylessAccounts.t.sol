@@ -981,7 +981,7 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
-        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        r.configure(id, _monthly(PAYEE, 500_000_000, 60));
 
         (uint64 due, uint256 owed) = r.nextRun(id);
         assertEq(due, FEB_2027 + 28 days, "first run is 1 March");
@@ -1008,7 +1008,7 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
-        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        r.configure(id, _monthly(PAYEE, 500_000_000, 60));
 
         // Nothing runs through March, April and May. It is now mid-June.
         vm.warp(FEB_2027 + 135 days);
@@ -1032,7 +1032,7 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
-        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        r.configure(id, _monthly(PAYEE, 500_000_000, 60));
         vm.warp(FEB_2027 + 28 days);
 
         // Under a cap-style rule 499 XRP would sail through. Here only the pinned amount is a match —
@@ -1058,7 +1058,7 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
-        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        r.configure(id, _monthly(PAYEE, 500_000_000, 60));
         vm.warp(FEB_2027 + 28 days);
 
         vm.prank(agent);
@@ -1095,22 +1095,37 @@ contract KeylessAccountsTest is Test {
         (uint64 dueAfter, uint256 owed) = r.nextRun(id);
         assertEq(dueAfter, 0, "an exhausted schedule owes nothing");
         assertEq(owed, 0);
-        assertFalse(r.hasUnlimitedLine(id));
+        assertEq(r.runsRemaining(id), 0, "an exhausted schedule can pay nothing more");
     }
 
-    function test_scheduled_hasUnlimitedLine_flagsTheLockFootgun() public {
+    /// The lock footgun is closed by construction: an endless line cannot be configured at all, so
+    /// "locked forever, draining forever" is not a reachable state.
+    function test_scheduled_endlessLineIsRejected() public {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "say how many payments"));
         r.configure(id, _monthly(PAYEE, 500_000_000, 0));
-        // The UI reads this to refuse locking: locked + endless = an irrevocable standing order.
-        assertTrue(r.hasUnlimitedLine(id));
+    }
+
+    function test_scheduled_runsRemaining_boundsWhatALockedAccountCanEverPay() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        vm.prank(alice);
+        r.configure(id, _monthly(PAYEE, 500_000_000, 3));
+        assertEq(r.runsRemaining(id), 3);
+
+        (uint64 due,) = r.nextRun(id);
+        vm.warp(due);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("run"));
+        assertEq(r.runsRemaining(id), 2, "locking now caps the outflow at 2 more payments");
     }
 
     function test_scheduled_offsetLandsOnTheFifteenth() public {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
-        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 0);
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 60);
         ls[0].offsetDays = 14;
         vm.prank(alice);
         r.configure(id, ls);
@@ -1122,7 +1137,7 @@ contract KeylessAccountsTest is Test {
     function test_scheduled_offsetBeyondTheWindowIsRejected() public {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
-        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 0);
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 100, 60);
         ls[0].offsetDays = 28; // would spill out of February
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "offset outside the window"));
@@ -1133,8 +1148,8 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         ScheduledRule.LineInput[] memory ls = new ScheduledRule.LineInput[](2);
-        ls[0] = ScheduledRule.LineInput(PAYEE, 500_000_000, CalendarLib.CAL_MONTH, 0, 0, 0);
-        ls[1] = ScheduledRule.LineInput(EXCHANGE, 300_000_000, CalendarLib.CAL_MONTH, 0, 0, 0);
+        ls[0] = ScheduledRule.LineInput(PAYEE, 500_000_000, CalendarLib.CAL_MONTH, 0, 60, 0);
+        ls[1] = ScheduledRule.LineInput(EXCHANGE, 300_000_000, CalendarLib.CAL_MONTH, 0, 60, 0);
         vm.prank(alice);
         r.configure(id, ls);
 
@@ -1166,7 +1181,7 @@ contract KeylessAccountsTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
-        r.configure(id, _monthly(ATTACKER, 500_000_000, 0));
+        r.configure(id, _monthly(ATTACKER, 500_000_000, 60));
 
         vm.prank(alice);
         accounts.lockRule(id);
@@ -1174,7 +1189,7 @@ contract KeylessAccountsTest is Test {
         // A stolen control key can no longer add a payee or cancel the plan.
         vm.prank(alice);
         vm.expectRevert(KeylessRuleBase.Locked.selector);
-        r.configure(id, _monthly(ATTACKER, 1, 0));
+        r.configure(id, _monthly(ATTACKER, 1, 60));
         vm.prank(alice);
         vm.expectRevert(KeylessRuleBase.Locked.selector);
         r.cancel(id);
@@ -1190,7 +1205,7 @@ contract KeylessAccountsTest is Test {
         vm.warp(FEB_2027);
         (ScheduledRule r, bytes32 id) = _scheduled();
         vm.prank(alice);
-        r.configure(id, _monthly(PAYEE, 500_000_000, 0));
+        r.configure(id, _monthly(PAYEE, 500_000_000, 60));
         vm.prank(alice);
         r.cancel(id);
 
@@ -1209,7 +1224,7 @@ contract KeylessAccountsTest is Test {
         uint256 n = r.MAX_LINES() + 1;
         ScheduledRule.LineInput[] memory ls = new ScheduledRule.LineInput[](n);
         for (uint256 i = 0; i < n; ++i) {
-            ls[i] = ScheduledRule.LineInput(PAYEE, 1, CalendarLib.CAL_MONTH, 0, 0, 0);
+            ls[i] = ScheduledRule.LineInput(PAYEE, 1, CalendarLib.CAL_MONTH, 0, 60, 0);
         }
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "too many scheduled payments"));

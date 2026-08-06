@@ -98,7 +98,7 @@ export const RULES = {
   fxrp: "0x12AdbaAbE8409fF2f7B8f12e680a6E5698a7D2eE",
   // Payroll / DCA. Each line pins payee + exact amount + calendar slot, so whoever triggers it has no
   // discretion at all. Skips missed runs rather than accruing them. See backend/src/rules/ScheduledRule.sol.
-  scheduled: "0xF1b2fcfe2C8CEe9b976Fc793c9C5B941C7a7bac0",
+  scheduled: "0x3C1B2a200137e0E01589f50C469f410706E20177",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -390,7 +390,7 @@ export const RULE_ABIS = {
     { type: "function", name: "nextRun", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [
       { name: "dueAt", type: "uint64" }, { name: "totalDrops", type: "uint256" },
     ] },
-    { type: "function", name: "hasUnlimitedLine", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "bool" }] },
+    { type: "function", name: "runsRemaining", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "uint256" }] },
   ],
 } as const;
 
