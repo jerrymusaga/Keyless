@@ -2,14 +2,16 @@
   "name": "keyless-executors",
   "private": true,
   "type": "module",
-  "description": "Permissionless Keyless executors — FXRP direct minting, and Conditional-policy releases. Both FDC-attest a real-world fact and complete a step the user's own policy already authorised.",
+  "description": "Permissionless Keyless executors \u2014 FXRP direct minting, Conditional-policy releases, and scheduled payments. Each completes a step the user's own policy already authorised.",
   "scripts": {
-    "// start": "Railway runs this. Both watchers live here, so WATCHER picks which one a service runs: 'mint' (default) or 'conditional'. Deploy the same repo root twice with different WATCHER values.",
+    "// start": "Railway runs this. Every watcher lives here, so WATCHER picks which one a service runs: 'mint' (default), 'conditional', or 'scheduled'. Deploy the same repo root once per watcher.",
     "start": "node start.mjs",
     "watch:mint": "node executor.mjs watch",
     "watch:conditional": "node conditional.mjs watch",
+    "watch:scheduled": "node scheduled.mjs watch",
     "mint": "node executor.mjs",
-    "release": "node conditional.mjs"
+    "release": "node conditional.mjs",
+    "due": "node scheduled.mjs due"
   },
   "dependencies": {
     "viem": "^2.21.0"

@@ -37,5 +37,14 @@ console.log(`[start] WATCHER=${which} — watching for ${picked.what}`);
 // Inherit stdio so the watcher's logs are the service's logs, and forward its exit code so Railway
 // restarts on a genuine crash rather than treating it as a clean stop.
 const child = spawn(process.execPath, [picked.script, "watch"], { stdio: "inherit" });
-for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => child.kill(sig));
-child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
+
+// A shutdown we were asked for is not a failure. SIGTERM is exactly how Railway stops a service on
+// redeploy, so exiting non-zero on it would make every ordinary deploy look like a crash — and with an
+// ON_FAILURE restart policy, invite a restart loop. Anything else (a crash signal, a non-zero exit) is
+// still reported honestly so the platform brings the watcher back.
+const requested = new Set(["SIGTERM", "SIGINT"]);
+for (const sig of requested) process.on(sig, () => child.kill(sig));
+child.on("exit", (code, signal) => {
+  if (signal && requested.has(signal)) return process.exit(0);
+  process.exit(signal ? 1 : (code ?? 0));
+});
