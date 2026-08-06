@@ -32,8 +32,6 @@ export const ADDRESSES = {
   /** KeylessAccounts — the multi-tenant manager, and the extension's sole instructionsSender.
    *  Every wallet's key obeys this contract and nothing else. (Writeback + lockable rules, bound on 65645.) */
   accounts: "0x57eb332D7000752ee82a35cc1A75941F0a619979",
-  /** Legacy single-wallet demo policy (old baseline, dead). Kept only for the historical /see fallback. */
-  policy: "0x3CC32eB5d7ef1751f1fd0b81DdEBcca382bf586d",
   /** Deployer. Holds no XRPL key — that is the point. */
   owner: "0xc760AB37E00082202e1659C256E01372f1739886",
   /** The governance-attested TEE machine serving extension 65645. */
@@ -110,24 +108,6 @@ export const EXTENSION_ID = 65645;
  *  to claimBackAddress. Override with NEXT_PUBLIC_INIT_FEE if the chain's fee differs. */
 export const INIT_FEE: bigint = BigInt(process.env.NEXT_PUBLIC_INIT_FEE ?? "1000");
 
-/**
- * The enclave's XRPL account, generated *inside* the TEE — no human ever saw the
- * seed. The policy's own `xrplAccount()` field still reads "pending-init"
- * (it is informational and was never written back post-INIT), so this constant
- * comes from the ledger itself, which is the stronger source anyway.
- */
-export const ENCLAVE_XRPL_ACCOUNT = "randbAijaVXWYaMxLEvSv8twud84xUF3dv";
-
-/** The allowlisted destination that actually received the 15 XRP. */
-export const ALLOWLISTED_RECIPIENT = "rw15KUmEBEERnbNFys2gVpc26FTABwVDMC";
-
-/** The recorded payment, in drops. 100M funded − 15M sent − 12 fee = 84,999,988. */
-export const PAYMENT_EVIDENCE = {
-  fundedDrops: 100_000_000n,
-  sentDrops: 15_000_000n,
-  xrplFeeDrops: 12n,
-  enclaveBalanceAfterDrops: 84_999_988n,
-} as const;
 
 export const POLICY_ABI = [
   {

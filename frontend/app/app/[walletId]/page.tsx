@@ -5,7 +5,7 @@ import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { motion, AnimatePresence } from "motion/react";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig, formatLimit, type Limit } from "@/components/app/RuleConfig";
-import { Button, Card, Copy, Field, Input, Notice, Skeleton } from "@/components/app/ui";
+import { Button, Card, Copy, Input, Notice, Skeleton } from "@/components/app/ui";
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
 import { getXrplBalance, getRecentPayments, type XrplTx } from "@/lib/xrpl";
@@ -16,7 +16,6 @@ import {
   EXTENSION_ID,
   INIT_FEE,
   RULES,
-  RULE_ABIS,
   RULE_META,
   ZERO_ADDRESS,
   XRPL_ADDRESS_RE,

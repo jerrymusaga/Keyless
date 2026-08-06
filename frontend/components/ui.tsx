@@ -48,21 +48,6 @@ export function Section({
   );
 }
 
-export function Panel({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`rounded-xl border hairline bg-ink-900/70 backdrop-blur-sm ${className}`}
-    >
-      {children}
-    </div>
-  );
-}
 
 /** A single on-chain fact. Monospace because it is data, not prose. */
 export function Fact({
@@ -140,23 +125,6 @@ export function LiveBadge({ label = "Live on Coston2" }: { label?: string }) {
   );
 }
 
-export function Callout({
-  tone = "note",
-  title,
-  children,
-}: {
-  tone?: "note" | "warn";
-  title: string;
-  children: ReactNode;
-}) {
-  const accent = tone === "warn" ? "border-l-warn-500" : "border-l-signal-500";
-  return (
-    <div className={`rounded-r-lg border-l-2 ${accent} bg-ink-850/60 px-5 py-4`}>
-      <div className="text-[13px] font-medium text-mist-100">{title}</div>
-      <div className="mt-1.5 text-[13px] leading-relaxed text-mist-400">{children}</div>
-    </div>
-  );
-}
 
 export function Code({ children }: { children: ReactNode }) {
   return (

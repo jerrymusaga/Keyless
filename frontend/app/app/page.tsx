@@ -8,7 +8,7 @@ import { Button, Card, Notice, Skeleton, Spinner } from "@/components/app/ui";
 import { ControlKey } from "@/components/app/ControlKey";
 import { listAccounts, type LocalAccount } from "@/lib/accounts";
 import { publicClient } from "@/lib/clients";
-import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, LEGACY_RULE_NAMES, addr, xrplAccount, ZERO_ADDRESS } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, LEGACY_RULE_NAMES, addr, ZERO_ADDRESS } from "@/lib/keyless";
 
 type Row = LocalAccount & { rule: `0x${string}`; xrplAddress: string };
 
