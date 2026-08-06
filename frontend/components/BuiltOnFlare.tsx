@@ -93,11 +93,6 @@ export function BuiltOnFlare() {
         ))}
       </div>
 
-      <p className="mt-5 max-w-2xl text-[13px] leading-relaxed text-mist-500">
-        What isn&rsquo;t here matters too: no FTSO, and no private inputs — the data these rules act on is
-        public, and the TEE is doing key custody and code integrity, not confidentiality. Claiming otherwise
-        would be easy and wrong.
-      </p>
     </section>
   );
 }

@@ -12,7 +12,8 @@ export function AppHeader() {
   return (
     <header className="sticky top-0 z-20 border-b hairline bg-ink-950/80 backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-6 py-3.5">
-        <Link href="/app" className="flex items-center gap-2.5">
+        {/* The wordmark goes home, not to the account list — that's what people reach for it for. */}
+        <Link href="/" className="flex items-center gap-2.5">
           <KeyholeMark />
           <span className="font-mono text-sm tracking-[0.18em] text-mist-100">KEYLESS</span>
         </Link>

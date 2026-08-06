@@ -1,4 +1,4 @@
-import { encodeFunctionData, BaseError, ContractFunctionRevertedError } from "viem";
+import { encodeFunctionData, BaseError, ContractFunctionRevertedError, decodeErrorResult } from "viem";
 import { publicClient } from "./clients";
 import { ADDRESSES, RULES } from "./keyless";
 
@@ -56,16 +56,67 @@ export async function dryRunAuthorize(
     });
     return { allowed: true };
   } catch (e) {
-    if (e instanceof BaseError) {
-      const rev = e.walk((err) => err instanceof ContractFunctionRevertedError);
-      if (rev instanceof ContractFunctionRevertedError) {
-        const reason = (rev.data?.args?.[0] as string) ?? rev.reason ?? rev.shortMessage;
-        if (reason) return { allowed: false, reason };
-      }
-      return { allowed: false, reason: e.shortMessage };
-    }
+    const reason = revertReason(e);
+    if (reason) return { allowed: false, reason };
+    if (e instanceof BaseError) return { allowed: false, reason: e.shortMessage };
     return { allowed: false, reason: e instanceof Error ? e.message.split("\n")[0] : String(e) };
   }
+}
+
+/** The custom errors every rule can throw, from KeylessRuleBase. */
+const RULE_ERRORS = [
+  { type: "error", name: "Rejected", inputs: [{ name: "reason", type: "string" }] },
+  { type: "error", name: "NotAccounts", inputs: [] },
+  { type: "error", name: "NotWalletOwner", inputs: [] },
+  { type: "error", name: "Locked", inputs: [] },
+] as const;
+
+/**
+ * Pull the rule's own words out of a failed call.
+ *
+ * `publicClient.call` is given raw calldata and no ABI, so viem has nothing to decode a custom error
+ * against and reports "an unknown reason" — which is how a perfectly good refusal ("condition not proven
+ * yet") reached the page as a shrug. The whole point of this page is that the rule explains itself.
+ *
+ * The revert bytes are not where you would expect: viem surfaces them on the RpcRequestError deep in the
+ * cause chain, and ExecutionRevertedError above it drops them. So walk the chain for the first thing
+ * carrying hex rather than matching on any one error class.
+ */
+type MaybeCause = { data?: unknown; cause?: unknown };
+
+function revertData(e: unknown): `0x${string}` | undefined {
+  let c = e as MaybeCause | undefined;
+  for (let depth = 0; c && depth < 8; depth++) {
+    const d = c.data;
+    const nested = (d as MaybeCause | undefined)?.data;
+    const hex = typeof d === "string" ? d : typeof nested === "string" ? nested : undefined;
+    if (hex?.startsWith("0x") && hex.length >= 10) return hex as `0x${string}`;
+    c = c.cause as MaybeCause | undefined;
+  }
+  return undefined;
+}
+
+function revertReason(e: unknown): string | undefined {
+  const hex = revertData(e);
+  if (hex) {
+    try {
+      const { errorName, args } = decodeErrorResult({ abi: RULE_ERRORS, data: hex });
+      if (errorName === "Rejected") {
+        const r = args?.[0];
+        if (typeof r === "string" && r) return r;
+      }
+      if (errorName === "Locked") return "this account's policy is locked";
+      if (errorName) return errorName;
+    } catch { /* not one of ours — fall through */ }
+  }
+  if (e instanceof BaseError) {
+    const rev = e.walk((err) => err instanceof ContractFunctionRevertedError);
+    if (rev instanceof ContractFunctionRevertedError) {
+      const r = (rev.data?.args?.[0] as string) ?? rev.reason;
+      if (r) return r;
+    }
+  }
+  return undefined;
 }
 
 export const XRP = 1_000_000n;
