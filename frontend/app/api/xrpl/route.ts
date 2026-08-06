@@ -8,7 +8,26 @@
  */
 export const runtime = "nodejs";
 
-const XRPL_RPC = process.env.XRPL_RPC_URL || "https://testnet.xrpl-labs.com/";
+/**
+ * Several upstreams, tried in order — a single node is a single point of failure, and testnet nodes go
+ * out regularly. Observed live: xrpl-labs answering `noNetwork` (its node desynced) while s.altnet served
+ * the same query fine, which left balances stuck on a loading state forever. The browser-hostility that
+ * originally pushed us off s.altnet (no CORS, non-standard port) doesn't apply here — we call it from the
+ * server. XRPL_RPC_URL still wins if set.
+ */
+const XRPL_RPCS = [
+  process.env.XRPL_RPC_URL,
+  "https://s.altnet.rippletest.net:51234/",
+  "https://testnet.xrpl-labs.com/",
+].filter(Boolean) as string[];
+
+/** An upstream that is up but not serving (desynced node, gateway error) — try the next one. */
+function isUpstreamFailure(json: unknown): boolean {
+  const r = (json as { result?: { status?: string; error?: string } })?.result;
+  if (!r) return true;
+  // `actNotFound` is a real answer (an unfunded account), not a failure — don't fall through on it.
+  return r.status === "error" && r.error !== "actNotFound";
+}
 
 export async function POST(req: Request) {
   let account: string;
@@ -31,19 +50,24 @@ export async function POST(req: Request) {
         }
       : { method: "account_info", params: [{ account, ledger_index: "validated" }] };
 
-  try {
-    const res = await fetch(XRPL_RPC, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
-    });
-    const json = await res.json();
-    return Response.json(json);
-  } catch (e) {
-    return Response.json(
-      { error: `xrpl upstream unreachable: ${e instanceof Error ? e.message : String(e)}` },
-      { status: 502 },
-    );
+  let lastError = "no upstream tried";
+  for (const rpc of XRPL_RPCS) {
+    try {
+      const res = await fetch(rpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (isUpstreamFailure(json)) {
+        lastError = `${new URL(rpc).host}: ${(json as { result?: { error?: string } })?.result?.error ?? res.status}`;
+        continue;
+      }
+      return Response.json(json);
+    } catch (e) {
+      lastError = `${new URL(rpc).host}: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }
+  return Response.json({ error: `no XRPL node answered (${lastError})` }, { status: 502 });
 }

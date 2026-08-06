@@ -316,6 +316,7 @@ function WelcomeBanner({ walletId }: { walletId: string }) {
 function ReceivePanel({ xrpl }: { xrpl: string }) {
   const [bal, setBal] = useState<{ funded: boolean; drops: bigint } | null>(null);
   const [txs, setTxs] = useState<XrplTx[] | null>(null);
+  const [ledgerDown, setLedgerDown] = useState(false);
 
   useEffect(() => {
     if (!xrpl) return;
@@ -323,8 +324,12 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
     const load = async () => {
       try {
         const [b, t] = await Promise.all([getXrplBalance(xrpl), getRecentPayments(xrpl)]);
-        if (!stop) { setBal(b); setTxs(t); }
-      } catch { /* transient XRPL RPC */ }
+        if (!stop) { setBal(b); setTxs(t); setLedgerDown(false); }
+      } catch {
+        // Don't leave the balance on a placeholder forever — an unreachable ledger looks identical to a
+        // slow one, and someone who just funded the account will assume their money vanished.
+        if (!stop) setLedgerDown(true);
+      }
     };
     load();
     const t = setInterval(load, 10_000);
@@ -343,8 +348,11 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
         <div className="text-right">
           <div className="text-xs text-mist-500">Balance</div>
           <div className="font-mono text-xl text-mist-100">
-            {!xrpl ? "—" : bal === null ? "…" : bal.funded ? formatDrops(bal.drops) : "unfunded"}
+            {!xrpl ? "—" : bal !== null ? (bal.funded ? formatDrops(bal.drops) : "unfunded") : ledgerDown ? "—" : "…"}
           </div>
+          {ledgerDown && bal === null && (
+            <div className="mt-0.5 text-[11px] text-warn-500">can&rsquo;t reach the XRP Ledger</div>
+          )}
         </div>
       </div>
 
