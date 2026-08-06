@@ -44,7 +44,225 @@ export function RuleConfig({ walletId, ruleKey }: { walletId: `0x${string}`; rul
   if (ruleKey === "exchange") return <ExchangeConfig walletId={walletId} />;
   if (ruleKey === "rateLimit") return <RateLimitConfig walletId={walletId} />;
   if (ruleKey === "fxrp") return <FxrpConfig walletId={walletId} />;
+  if (ruleKey === "scheduled") return <ScheduledConfig walletId={walletId} />;
   return <ConditionalConfig walletId={walletId} />;
+}
+
+// Calendar units, matching CalendarLib. `offsetMax` is what keeps a schedule inside its own window —
+// day 28 exists in every month, so an offset payday can never spill into the next one.
+const CAL = [
+  { unit: 0, label: "day", every: "Every day", offsetMax: 0 },
+  { unit: 1, label: "week", every: "Every week", offsetMax: 6 },
+  { unit: 2, label: "month", every: "Every month", offsetMax: 27 },
+] as const;
+
+const ORDINAL = (n: number) => {
+  const teens = n % 100;
+  if (teens >= 11 && teens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+};
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+type ScheduleLine = { recipient: string; amount: string; unit: number; offsetDays: number; runs: string };
+type SavedLine = {
+  amount: bigint; nextDue: number; runsLeft: number; unit: number; offsetDays: number; active: boolean;
+};
+
+/** Say a line back as the sentence the user filled in, not as its fields. */
+function describeLine(l: { unit: number; offsetDays: number }): string {
+  if (l.unit === 0) return "every day";
+  if (l.unit === 1) return `every ${DAY_NAMES[l.offsetDays] ?? "Monday"}`;
+  return `on the ${ORDINAL(l.offsetDays + 1)} of every month`;
+}
+
+const fmtDate = (ts: number) =>
+  new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+
+function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
+  const [lines, setLines] = useState<ScheduleLine[]>([
+    { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "" },
+  ]);
+  const [saved, setSaved] = useState<SavedLine[] | null>(null);
+  const [next, setNext] = useState<{ dueAt: number; totalDrops: bigint } | null>(null);
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const [unlimited, setUnlimited] = useState(false);
+  const { busy, msg, run } = useConfigAction();
+
+  const load = useCallback(async () => {
+    const rule = RULES.scheduled as `0x${string}`;
+    const abi = RULE_ABIS.scheduled as never;
+    try {
+      const count = (await publicClient.readContract({ address: rule, abi, functionName: "lineCount", args: [walletId] })) as bigint;
+      const rows: SavedLine[] = [];
+      for (let i = 0n; i < count; i++) {
+        const l = (await publicClient.readContract({ address: rule, abi, functionName: "linesOf", args: [walletId, i] })) as readonly [string, bigint, bigint, number, number, number, boolean];
+        rows.push({ amount: l[1], nextDue: Number(l[2]), runsLeft: Number(l[3]), unit: Number(l[4]), offsetDays: Number(l[5]), active: l[6] });
+      }
+      setSaved(rows);
+      const nr = (await publicClient.readContract({ address: rule, abi, functionName: "nextRun", args: [walletId] })) as readonly [bigint, bigint];
+      setNext({ dueAt: Number(nr[0]), totalDrops: nr[1] });
+      setUnlimited((await publicClient.readContract({ address: rule, abi, functionName: "hasUnlimitedLine", args: [walletId] })) as boolean);
+    } catch { /* transient */ }
+    // The whole point of knowing the future is being able to warn about it in advance.
+    try {
+      const xrpl = (await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI as never, functionName: "xrplAddressOf", args: [walletId] })) as string;
+      if (xrpl) {
+        const b = await getXrplBalance(xrpl);
+        setBalance(b.funded ? b.drops : 0n);
+      }
+    } catch { /* leave the warning off rather than guess */ }
+  }, [walletId]);
+  useEffect(() => { load(); }, [load]);
+
+  const set = (i: number, patch: Partial<ScheduleLine>) =>
+    setLines((ls) => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
+
+  const save = async () => {
+    const payload: { recipient: string; amount: bigint; unit: number; offsetDays: number; runs: number; startAt: bigint }[] = [];
+    try {
+      for (const l of lines) {
+        assertXrpl(l.recipient);
+        const runs = l.runs.trim() === "" ? 0 : Number(l.runs);
+        if (!Number.isInteger(runs) || runs < 0) throw new Error("how many times must be a whole number");
+        payload.push({ recipient: l.recipient.trim(), amount: xrpToDrops(l.amount), unit: l.unit, offsetDays: l.offsetDays, runs, startAt: 0n });
+      }
+    } catch (e) {
+      return alert(e instanceof Error ? e.message : String(e));
+    }
+    const ok = await run(
+      RULES.scheduled as `0x${string}`, RULE_ABIS.scheduled, "configure", [walletId, payload],
+      `Set. This account can only pay ${payload.length === 1 ? "that payment" : `those ${payload.length} payments`}, on time, and nothing else.`,
+    );
+    if (ok) { load(); signalConfigChanged(); }
+  };
+
+  const cancel = async () => {
+    if (!confirm("Stop every scheduled payment on this account?")) return;
+    const ok = await run(RULES.scheduled as `0x${string}`, RULE_ABIS.scheduled, "cancel", [walletId], "Stopped. Nothing further can be paid.");
+    if (ok) { load(); signalConfigChanged(); }
+  };
+
+  const active = (saved ?? []).filter((l) => l.active);
+  const short = next && balance !== null && next.dueAt > 0 && balance < next.totalDrops;
+
+  return (
+    <div className="space-y-4">
+      {next && next.dueAt > 0 && (
+        <Notice tone={short ? "warn" : "info"}>
+          <div className="space-y-1">
+            <div>
+              <span className="font-medium">Next payment {fmtDate(next.dueAt)}</span> — {formatDrops(next.totalDrops)}
+              {active.length > 1 && <> across {active.length} lines</>}.
+            </div>
+            {short ? (
+              <div>
+                This account holds {formatDrops(balance!)}. Top it up before then, or the payment is skipped —
+                a missed run isn&rsquo;t paid late, it&rsquo;s simply missed.
+              </div>
+            ) : (
+              balance !== null && <div className="text-mist-400">Funded — this account holds {formatDrops(balance)}.</div>
+            )}
+          </div>
+        </Notice>
+      )}
+
+      {unlimited && (
+        <Notice tone="warn">
+          One of these runs forever. Don&rsquo;t lock this account until you set a number of payments —
+          locking an endless schedule makes it permanent, and it would pay until the account is empty.
+        </Notice>
+      )}
+
+      {active.length > 0 && (
+        <div className="hairline rounded-xl border">
+          {active.map((l, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 border-b border-white/5 p-3 last:border-0">
+              <span className="text-[13px] text-mist-200">
+                {formatDrops(l.amount)} {describeLine(l)}
+              </span>
+              <span className="shrink-0 text-[11px] text-mist-500">
+                next {fmtDate(l.nextDue)}
+                {l.runsLeft > 0 && <> · {l.runsLeft} left</>}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {lines.map((l, i) => {
+          const cal = CAL[l.unit];
+          return (
+            <div key={i} className="hairline space-y-3 rounded-xl border bg-ink-900/40 p-3">
+              <Field label="Pay who?">
+                <Input value={l.recipient} onChange={(e) => set(i, { recipient: e.target.value })} placeholder="rAlice…" />
+              </Field>
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="How much?">
+                  <div className="flex items-center gap-2">
+                    <NumberInput value={l.amount} onValueChange={(v) => set(i, { amount: v })} decimal placeholder="500" className="w-28" />
+                    <span className="text-[13px] text-mist-500">XRP</span>
+                  </div>
+                </Field>
+                <Field label="How often?">
+                  <select
+                    value={l.unit}
+                    onChange={(e) => set(i, { unit: Number(e.target.value), offsetDays: 0 })}
+                    className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                  >
+                    {CAL.map((c) => <option key={c.unit} value={c.unit}>{c.every}</option>)}
+                  </select>
+                </Field>
+                {cal.offsetMax > 0 && (
+                  <Field label={l.unit === 1 ? "On which day?" : "On which date?"}>
+                    <select
+                      value={l.offsetDays}
+                      onChange={(e) => set(i, { offsetDays: Number(e.target.value) })}
+                      className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                    >
+                      {Array.from({ length: cal.offsetMax + 1 }, (_, d) => (
+                        <option key={d} value={d}>{l.unit === 1 ? DAY_NAMES[d] : `the ${ORDINAL(d + 1)}`}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="How many times?" hint="Blank = until you stop it">
+                  <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-24" />
+                </Field>
+              </div>
+              {lines.length > 1 && (
+                <button type="button" onClick={() => setLines((ls) => ls.filter((_, n) => n !== i))} className="text-[11px] text-mist-500 hover:text-refuse-500">
+                  Remove
+                </button>
+              )}
+            </div>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setLines((ls) => [...ls, { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "" }])}
+          className="text-[12px] text-signal-400 hover:text-signal-300"
+        >
+          + Another payment
+        </button>
+      </div>
+
+      <p className="text-[12px] leading-relaxed text-mist-500">
+        Saving replaces the whole schedule. Nothing can be paid early, nothing can be paid twice in the same{" "}
+        {CAL[lines[0]?.unit ?? 2].label}, and nobody outside this list can be paid at all — including you.
+      </p>
+
+      <div className="flex items-center gap-2">
+        <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save schedule"}</Button>
+        {active.length > 0 && (
+          <button type="button" onClick={cancel} disabled={busy} className="text-[12px] text-mist-500 hover:text-refuse-500">
+            Stop everything
+          </button>
+        )}
+      </div>
+      {msg && <Notice tone={msg.tone === "ok" ? "ok" : "error"}>{msg.text}</Notice>}
+    </div>
+  );
 }
 
 type SavedRecipient = { address: string; requireTag: boolean; tag: number };

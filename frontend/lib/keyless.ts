@@ -96,6 +96,9 @@ export const RULES = {
   // configurable), then vault ops + redeem-home; transferring FXRP out is blocked. Supersedes the two
   // separate fxrpMint (0xaa0405f9…) + fxrpDefi (0xB5Ab70B4…) rules — see LEGACY_RULE_NAMES.
   fxrp: "0x12AdbaAbE8409fF2f7B8f12e680a6E5698a7D2eE",
+  // Payroll / DCA. Each line pins payee + exact amount + calendar slot, so whoever triggers it has no
+  // discretion at all. Skips missed runs rather than accruing them. See backend/src/rules/ScheduledRule.sol.
+  scheduled: "0xF1b2fcfe2C8CEe9b976Fc793c9C5B941C7a7bac0",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -366,6 +369,29 @@ export const RULE_ABIS = {
     { type: "function", name: "redeemHomeRef", stateMutability: "pure", inputs: [{ name: "lots", type: "uint80" }], outputs: [{ type: "bytes32" }] },
     { type: "function", name: "vaultRef", stateMutability: "pure", inputs: [{ name: "id", type: "uint8" }, { name: "vaultId", type: "uint16" }, { name: "value", type: "uint80" }], outputs: [{ type: "bytes32" }] },
   ],
+  // ScheduledRule. `configure` replaces the whole schedule; `nextRun` is what lets the account warn
+  // "you'll need 500 XRP on 1 September" before the run rather than after it.
+  scheduled: [
+    { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [
+      { name: "walletId", type: "bytes32" },
+      { name: "lines", type: "tuple[]", components: [
+        { name: "recipient", type: "string" }, { name: "amount", type: "uint256" },
+        { name: "unit", type: "uint8" }, { name: "offsetDays", type: "uint8" },
+        { name: "runs", type: "uint32" }, { name: "startAt", type: "uint64" },
+      ] },
+    ], outputs: [] },
+    { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }], outputs: [] },
+    { type: "function", name: "lineCount", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "uint256" }] },
+    { type: "function", name: "linesOf", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "uint256" }], outputs: [
+      { name: "payee", type: "bytes32" }, { name: "amount", type: "uint256" }, { name: "nextDue", type: "uint64" },
+      { name: "runsLeft", type: "uint32" }, { name: "unit", type: "uint8" }, { name: "offsetDays", type: "uint8" },
+      { name: "active", type: "bool" },
+    ] },
+    { type: "function", name: "nextRun", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [
+      { name: "dueAt", type: "uint64" }, { name: "totalDrops", type: "uint256" },
+    ] },
+    { type: "function", name: "hasUnlimitedLine", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "bool" }] },
+  ],
 } as const;
 
 /**
@@ -491,6 +517,13 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
     protects: "Funds stay locked until the world proves it — no early release, no wrong payee.",
     address: RULES.escrow,
   },
+  scheduled: {
+    name: "Scheduled payments",
+    tagline: "A fixed amount, to a fixed payee, on a fixed date. Nothing early, nothing extra.",
+    useFor: "Payroll, rent, allowances, moving into FXRP a bit at a time.",
+    protects: "Whoever triggers it can only run your schedule on time — never early, never more.",
+    address: RULES.scheduled,
+  },
   fxrp: {
     name: "FXRP on Flare",
     tagline: "Move XRP to Flare, earn yield, and bring it home — locked to your account.",
@@ -519,14 +552,7 @@ export type PolicySlot = {
 export const POLICY_SLOTS: PolicySlot[] = [
   { question: "Who can be paid?", rule: "exchange" },
   { question: "How much can leave?", rule: "rateLimit" },
-  {
-    question: "When — on a set date?",
-    soon: {
-      name: "Scheduled payments",
-      tagline: "A fixed amount, to a fixed payee, on a fixed date. Nothing early, nothing extra.",
-      useFor: "Payroll, rent, allowances, moving into FXRP a bit at a time.",
-    },
-  },
+  { question: "When — on a set date?", rule: "scheduled" },
   { question: "When — once it's proven?", rule: "escrow" },
 ];
 
