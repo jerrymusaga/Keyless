@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, Card, Input } from "@/components/app/ui";
 import { DEMOS, dryRunAuthorize, type Demo, type Scenario, type Verdict } from "@/lib/showcase";
 import { explorerAddress, addr, XRPL_ADDRESS_RE } from "@/lib/keyless";
+import { BuiltOnFlare } from "@/components/BuiltOnFlare";
 
 export default function SeePage() {
   return (
@@ -37,6 +38,8 @@ export default function SeePage() {
             <DemoPanel key={d.key} demo={d} />
           ))}
         </div>
+
+        <BuiltOnFlare />
 
         <div className="mt-14 rounded-2xl border hairline bg-ink-900/60 p-8 text-center">
           <h2 className="text-xl font-medium text-mist-100">Convinced? Make your own in a minute.</h2>
