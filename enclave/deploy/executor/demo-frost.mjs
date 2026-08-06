@@ -100,6 +100,9 @@ async function main() {
   await pub.waitForTransactionReceipt({ hash: h });
 
   const deadline = new Date(Date.now() + 60 * 86400e3).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  // The exact URL the FDC fetches. Open it on camera: the raw reading is the most convincing shot in the
+  // film, because it is plainly a public weather station and not a dashboard we control.
+  const url = `${request.url}?latitude=${site.lat}&longitude=${site.lon}&current=temperature_2m`;
   console.log(`
   ${site.name}  —  ${site.t}°C right now
   Cover: pay the grower up to 3 XRP if it drops to ${threshold}°C.
@@ -108,6 +111,9 @@ async function main() {
   Status: ${mode === "triggered"
     ? `the frost HAS happened (${site.t} <= ${threshold}). It is not proven yet — the watcher takes ~2-3 min.`
     : `no frost this severe (${site.t} > ${threshold}). Cover is live and unclaimed; nobody can be paid.`}
+
+  Open this on camera (the exact data Flare attests):
+  ${url}
 `);
 }
 
