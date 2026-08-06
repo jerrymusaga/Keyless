@@ -127,6 +127,9 @@ export type Demo = {
   name: string;
   walletId: `0x${string}`;
   rule: `0x${string}`;
+  /** The account's real XRPL address, reported back by the enclave after INIT. Shown so "test it" means
+   *  testing a specific account you can go and look up, not an anonymous one we assert exists. */
+  xrplAddress: string;
   /** Human summary of the account's live configuration. */
   config: string;
   /** What this account is for, in one line. */
@@ -143,6 +146,7 @@ export const DEMOS: Demo[] = [
     key: "exchange",
     name: "Exchange & allowlist",
     walletId: "0x9af6b2cd05b4db3079859565acfb0841af124e6b150aacf97c90f78df5db6630",
+    xrplAddress: "rGKXFNqj71DaSTRyv1Sg8xKLeozyDuBT1",
     rule: RULES.exchange,
     config: "May only pay one allowlisted address: rw15K…VDMC (a demo exchange).",
     scene: "A savings account that can only ever pay your exchange. Try to send it somewhere else.",
@@ -155,6 +159,7 @@ export const DEMOS: Demo[] = [
     key: "rateLimit",
     name: "Spending limit",
     walletId: "0xce79663f7ad7953383057a5dc98490e8e940c455b9b8556aea88ee443a04ae3e",
+    xrplAddress: "rNJrYUrmiHGTnQghR1vK2F76cgSFaxwtqy",
     rule: RULES.rateLimit,
     config: "Allowlisted recipient + a cap of 10 XRP per day.",
     scene: "An allowance for a bot: it can spend to the allowlist, up to 10 XRP/day. Try to blow past it.",
@@ -169,6 +174,7 @@ export const DEMOS: Demo[] = [
     name: "Scheduled payments",
     // A live schedule on the deployed rule: 500 XRP to one payee on the 1st of each month, 12 runs.
     walletId: "0x0eeb7caab035ac20471fca4662b7a6bc920c937d66fc0c4f5021179368aafac4",
+    xrplAddress: "r33g8KFgJRe8zkqwv3vsr4A82vXKUebUiP",
     rule: RULES.scheduled,
     config: "Pays exactly 500 XRP to one payee on the 1st of each month, 12 times, and nothing else.",
     scene: "A standing order nobody can bend. The payee, the amount and the date are all pinned — try paying early, paying a bit more, or paying someone else.",
@@ -186,6 +192,7 @@ export const DEMOS: Demo[] = [
     // real. Coinbase rather than CoinGecko: attestation providers each fetch the API and must agree, and
     // CoinGecko's rate limiting means requests against it never reach consensus.
     walletId: "0x03a0009e67a07f1ca58024123cf5a83619e9aac3f54813637cfc99fc4e2062c7",
+    xrplAddress: "rUxiFBkn444QeMBwMJSuLZ7ixKbKPHoEpu",
     rule: RULES.escrow,
     config: "Pays a supplier up to 100 XRP — but only once Flare's Data Connector proves XRP is worth at least $5. If that hasn't happened by 31 Jan 2027, the funds return to the payer instead.",
     scene: "A payment that waits on the real world. Flare hasn't proven the condition yet, so nothing can leave — not even back to the payer.",

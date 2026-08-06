@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Button, Card, Input } from "@/components/app/ui";
+import { Button, Card, Copy, Input } from "@/components/app/ui";
 import { DEMOS, dryRunAuthorize, type Demo, type Scenario, type Verdict } from "@/lib/showcase";
-import { explorerAddress, addr, XRPL_ADDRESS_RE } from "@/lib/keyless";
+import { explorerAddress, xrplAccount, addr, XRPL_ADDRESS_RE } from "@/lib/keyless";
 import { BuiltOnFlare } from "@/components/BuiltOnFlare";
 
 export default function SeePage() {
@@ -89,6 +89,18 @@ function DemoPanel({ demo }: { demo: Demo }) {
       </div>
       <p className="mt-2 text-[13px] leading-relaxed text-mist-400">{demo.scene}</p>
       <p className="mt-1.5 text-[12px] text-mist-500">{demo.config}</p>
+
+      {/* Which account this is. "Try to break it" is a weaker claim if the thing being broken is
+          anonymous — this one has a key in the enclave and a balance on the ledger you can go and read. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-mist-500">
+        <span>Testing</span>
+        <a href={xrplAccount(demo.xrplAddress)} target="_blank" rel="noreferrer" className="font-mono text-mist-300 underline decoration-ink-600 underline-offset-4 hover:decoration-signal-500">
+          {demo.xrplAddress} ↗
+        </a>
+        <Copy text={demo.xrplAddress} label="Copy" />
+        <span className="text-mist-600">·</span>
+        <span>key held in the enclave</span>
+      </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {demo.presets.map((s) => (
