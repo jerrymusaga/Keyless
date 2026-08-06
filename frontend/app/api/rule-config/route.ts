@@ -59,12 +59,22 @@ type Tagged = { ev: AbiEvent; block: bigint; index: bigint; args: Record<string,
  * The request is on-chain in full, so this is a faithful description of what the account is waiting on —
  * derived from the commitment itself, not from anything we store off-chain.
  */
-function describeCondition(request?: { url?: string; postProcessJq?: string }): string | undefined {
+function describeCondition(request?: { url?: string; postProcessJq?: string; queryParams?: string }): string | undefined {
   const url = request?.url ?? "";
   const jq = request?.postProcessJq ?? "";
   if (!url) return undefined;
-  const price = jq.match(/\.ripple\.usd\s*>=\s*([\d.]+)/);
+  const price = jq.match(/\.data\.amount\|tonumber\)\s*>=\s*([\d.]+)/) ?? jq.match(/\.ripple\.usd\s*>=\s*([\d.]+)/);
   if (price) return `XRP is worth at least $${price[1]}`;
+  const temp = jq.match(/temperature_2m\s*(<=|>=)\s*(-?[\d.]+)/);
+  if (temp) {
+    // The query lives in its own field (the verifier can't fetch an inline one), so read it from there.
+    let where = "";
+    try {
+      const q = JSON.parse(request?.queryParams || "{}") as Record<string, string>;
+      if (q.latitude && q.longitude) where = ` at ${q.latitude}, ${q.longitude}`;
+    } catch { /* leave it unqualified */ }
+    return `the temperature${where} ${temp[1] === "<=" ? "drops to" : "reaches"} ${temp[2]}°C`;
+  }
   const gh = url.match(/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)/);
   if (gh) return `${gh[1]}#${gh[3]} is ${gh[2] === "pulls" ? "merged" : "closed"}`;
   try {
@@ -124,16 +134,19 @@ export async function POST(req: Request) {
 
     // conditional
     const events = await replay(rule, [E.escrowConfigured, E.escrowCancelled, E.escrowReleased], walletId);
-    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string } | null = null;
+    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string; request?: Record<string, string> } | null = null;
     for (const e of events) {
       if (e.ev.name === "ConditionConfigured") {
         escrow = {
           recipient: String(e.args.recipient),
           maxAmount: String(e.args.maxAmount),
           released: false,
-          condition: describeCondition(e.args.request as { url?: string; postProcessJq?: string } | undefined),
+          condition: describeCondition(e.args.request as { url?: string; postProcessJq?: string; queryParams?: string } | undefined),
           deadline: String(e.args.deadline ?? "0"),
           fallback: String(e.args.fallbackRecipient ?? ""),
+          // The full pinned request, so a saved account can keep asking "is this true yet?" — the live
+          // readout shouldn't only exist while someone is composing the condition.
+          request: e.args.request as Record<string, string> | undefined,
         };
       } else if (e.ev.name === "ConditionProven") { if (escrow) escrow.released = true; }
       else escrow = null; // ConditionCancelled

@@ -954,6 +954,10 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [fallback, setFallback] = useState("");
   const [checking, setChecking] = useState(false);
   const [onchain, setOnchain] = useState<{ maxAmount: bigint; released: boolean; active: boolean } | null>(null);
+  const [saved, setSaved] = useState<{ condition?: string; recipient?: string; request?: Record<string, string> } | null>(null);
+  // Tagged with the request it was read for, so a reading can never be shown against a condition it
+  // wasn't taken from (e.g. right after the condition is replaced).
+  const [savedLive, setSavedLive] = useState<{ key: string; ok: boolean } | null>(null);
   const { busy, msg, run } = useConfigAction();
   const tpl = CONDITION_TEMPLATES[kind];
 
@@ -965,8 +969,40 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
       // which leaked a stray "0" into the panel.)
       setOnchain({ maxAmount: c[1], released: c[7], active: c[8] });
     } catch { /* transient */ }
+    // The chain holds hashes, not words. The words (and the pinned request we keep re-checking) come from
+    // the configure event, which carries both in full.
+    try {
+      const res = await fetch("/api/rule-config", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rule: "escrow", walletId }),
+      });
+      const b = await res.json();
+      setSaved(b.escrow ? { condition: b.escrow.condition, recipient: b.escrow.recipient, request: b.escrow.request } : null);
+    } catch { /* transient */ }
   }, [walletId]);
   useEffect(() => { load(); }, [load]);
+
+  // Keep asking the world about the *saved* condition, not just the one being composed. Otherwise a live
+  // account can only say "waiting" — it can't tell you whether it's waiting on the weather or on Flare,
+  // which is the difference between "nothing is happening" and "your payout is seconds away".
+  useEffect(() => {
+    const req = saved?.request;
+    if (!req || !onchain?.active || onchain.released) return;
+    const key = JSON.stringify(req);
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/condition", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request: req }),
+        });
+        const b = await res.json();
+        if (!stop && res.ok) setSavedLive({ key, ok: !!b.ok });
+      } catch { /* leave the last reading up */ }
+    };
+    tick();
+    const t = setInterval(tick, 30_000);
+    return () => { stop = true; clearInterval(t); };
+  }, [saved?.request, onchain?.active, onchain?.released]);
 
   // The release happens off-screen — a watcher proves the condition a minute or two later — so poll while
   // we're still waiting. Without this the panel sits on "Waiting on proof" forever and the user has to
@@ -1054,10 +1090,25 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
           {onchain.released ? (
             <><span className="font-medium">Proven ✓</span> — the condition was met and attested on-chain. This account can now pay its payee, up to {formatDrops(onchain.maxAmount)}.</>
           ) : (
-            <span className="flex items-center gap-2">
-              <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
-              <span><span className="font-medium">Waiting on proof.</span> This account can&rsquo;t pay anyone — not the payee, not you — until Flare attests the condition. It unlocks by itself, usually within a couple of minutes of becoming true.</span>
-            </span>
+            <div className="space-y-2">
+              <span className="flex items-center gap-2">
+                <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
+                <span><span className="font-medium">Locked until it&rsquo;s proven.</span> This account can&rsquo;t pay anyone — not the payee, not you — until Flare attests the condition.</span>
+              </span>
+              {saved?.condition && (
+                <div className="space-y-1 border-l border-white/10 pl-3 text-[13px] text-mist-400">
+                  <div>Watching <span className="text-mist-200">{saved.condition}</span></div>
+                  {/* Two very different silences look identical without this: waiting on the world, and
+                      waiting on Flare. Say which one it is. */}
+                  <div>
+                    Right now:{" "}
+                    {savedLive?.key !== JSON.stringify(saved.request) ? <span className="text-mist-500">checking…</span>
+                      : savedLive.ok ? <span className="text-signal-300">that&rsquo;s true — Flare is attesting it, usually a couple of minutes</span>
+                      : <span className="text-mist-300">not true yet — nothing can move until it is</span>}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </Notice>
       )}
