@@ -500,6 +500,36 @@ export const RULE_META: Record<RuleKey, { name: string; tagline: string; useFor:
   },
 };
 
+/**
+ * The policy set, arranged by the question each one answers rather than as a flat list.
+ *
+ * Every rule constrains exactly one axis of "when may this key sign" — WHO, HOW MUCH, or WHEN — so the
+ * picker leads with the question and treats the rule's name as the answer. People shop by the worry they
+ * arrived with ("who can this thing pay?"), not by policy names they've never seen.
+ *
+ * A slot with no `rule` isn't built yet. It stays visible on purpose: seeing the fourth question makes the
+ * shape of the set obvious, and makes Conditional read as the harder sibling of a familiar idea rather
+ * than a lone piece of machinery.
+ */
+export type PolicySlot = {
+  question: string;
+  rule?: RuleKey;
+  soon?: { name: string; tagline: string; useFor: string };
+};
+export const POLICY_SLOTS: PolicySlot[] = [
+  { question: "Who can be paid?", rule: "exchange" },
+  { question: "How much can leave?", rule: "rateLimit" },
+  {
+    question: "When — on a set date?",
+    soon: {
+      name: "Scheduled payments",
+      tagline: "A fixed amount, to a fixed payee, on a fixed date. Nothing early, nothing extra.",
+      useFor: "Payroll, rent, allowances, moving into FXRP a bit at a time.",
+    },
+  },
+  { question: "When — once it's proven?", rule: "escrow" },
+];
+
 /** Older/retired rule deployments, mapped to a display name so accounts created on them still label
  *  correctly (rather than falling back to "custom policy"). Keys are lowercased addresses. */
 export const LEGACY_RULE_NAMES: Record<string, string> = {
