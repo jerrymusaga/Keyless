@@ -88,6 +88,41 @@ function describeLine(l: { unit: number; offsetDays: number }): string {
   return `on the ${ORDINAL(l.offsetDays + 1)} of every month`;
 }
 
+/**
+ * The XRP price, fetched once and shared. Display only — see /api/price for why the conversion lives at
+ * the edge and never inside a rule.
+ */
+let xrpUsdCache: { at: number; usd: number } | null = null;
+function useXrpUsd(): number | null {
+  const [usd, setUsd] = useState<number | null>(xrpUsdCache?.usd ?? null);
+  useEffect(() => {
+    if (xrpUsdCache && Date.now() - xrpUsdCache.at < 60_000) return;
+    let stop = false;
+    fetch("/api/price")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (stop || !b?.usd) return;
+        xrpUsdCache = { at: Date.now(), usd: b.usd };
+        setUsd(b.usd);
+      })
+      .catch(() => { /* the hint just doesn't render */ });
+    return () => { stop = true; };
+  }, []);
+  return usd;
+}
+
+/** "≈ $57" beside an amount the contract has already fixed in XRP. Renders nothing if the price is down. */
+function UsdHint({ drops, usd }: { drops: bigint; usd: number | null }) {
+  if (usd === null) return null;
+  const value = (Number(drops) / 1e6) * usd;
+  if (!Number.isFinite(value)) return null;
+  return (
+    <span className="text-mist-500">
+      {" "}(about ${value.toLocaleString(undefined, { maximumFractionDigits: value < 10 ? 2 : 0 })})
+    </span>
+  );
+}
+
 const MS_DAY = 86_400_000;
 /**
  * When the first payment would land — a mirror of CalendarLib.nextBoundaryAfter, verified against the
@@ -131,6 +166,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
   const [next, setNext] = useState<{ dueAt: number; totalDrops: bigint } | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [runsLeft, setRunsLeft] = useState<number | null>(null);
+  const usd = useXrpUsd();
   const { busy, msg, run } = useConfigAction();
 
   const load = useCallback(async () => {
@@ -208,7 +244,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         <Notice tone={short ? "warn" : "info"}>
           <div className="space-y-1">
             <div>
-              <span className="font-medium">Next payment {fmtDate(next.dueAt)}</span> — {formatDrops(next.totalDrops)}
+              <span className="font-medium">Next payment {fmtDate(next.dueAt)}</span> — {formatDrops(next.totalDrops)}<UsdHint drops={next.totalDrops} usd={usd} />
               {active.length > 1 && <> across {active.length} lines</>}.
             </div>
             {short ? (
@@ -250,7 +286,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
           {active.map((l, i) => (
             <div key={i} className="flex items-center justify-between gap-3 border-b border-white/5 p-3 last:border-0">
               <span className="text-[13px] text-mist-200">
-                {formatDrops(l.amount)} {describeLine(l)}
+                {formatDrops(l.amount)}<UsdHint drops={l.amount} usd={usd} /> {describeLine(l)}
               </span>
               <span className="shrink-0 text-[11px] text-mist-500">
                 next {fmtDate(l.nextDue)}
@@ -326,7 +362,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                   you just agreed to; this does, before it's signed. */}
               {lineGaps(l).length === 0 ? (
                 <p className="text-[12px] leading-relaxed text-signal-300/90">
-                  {formatDrops(xrpToDrops(l.amount))} to <span className="font-mono">{addr(l.recipient.trim())}</span> {describeLine(l)},{" "}
+                  {formatDrops(xrpToDrops(l.amount))}<UsdHint drops={xrpToDrops(l.amount)} usd={usd} /> to <span className="font-mono">{addr(l.recipient.trim())}</span> {describeLine(l)},{" "}
                   {l.runs} time{Number(l.runs) === 1 ? "" : "s"} — first on{" "}
                   {fmtDate(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}
                   {(() => {
@@ -620,6 +656,7 @@ export function formatLimit(l: Limit): string {
  * bumped by the parent after a save so this re-reads once the explorer indexes the change.
  */
 function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; walletId: `0x${string}`; refreshKey: number }) {
+  const usd = useXrpUsd();
   const { write } = useKeyless();
   const [data, setData] = useState<RuleConfigResponse | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -681,6 +718,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
         {data?.limit && (
           <p className="text-[12px] text-mist-500">
             Allowance: <span className="text-mist-300">{formatLimit(data.limit)}</span>
+            <UsdHint drops={BigInt(data.limit.cap)} usd={usd} />
             {data.limit.maxPerTx !== "0" && <> · max <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerTx))}</span>/payment</>}
             {" · "}<span className="text-mist-300">{data.limit.allowlistOnly ? "approved recipients only" : "any recipient"}</span>
           </p>
