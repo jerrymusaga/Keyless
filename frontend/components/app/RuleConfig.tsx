@@ -62,6 +62,15 @@ const ORDINAL = (n: number) => {
 };
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+/** Everything a line needs before it can be saved. Returns what's missing, in the order it's asked for. */
+function lineGaps(l: ScheduleLine): string[] {
+  const gaps: string[] = [];
+  if (!XRPL_ADDRESS_RE.test(l.recipient.trim())) gaps.push("who to pay");
+  if (!(Number(l.amount) > 0)) gaps.push("how much");
+  if (!(Number.isInteger(Number(l.runs)) && Number(l.runs) >= 1)) gaps.push("how many payments");
+  return gaps;
+}
+
 type ScheduleLine = { recipient: string; amount: string; unit: number; offsetDays: number; runs: string; startAt: string };
 type SavedLine = {
   amount: bigint; nextDue: number; runsLeft: number; unit: number; offsetDays: number; active: boolean;
@@ -72,6 +81,30 @@ function describeLine(l: { unit: number; offsetDays: number }): string {
   if (l.unit === 0) return "every day";
   if (l.unit === 1) return `every ${DAY_NAMES[l.offsetDays] ?? "Monday"}`;
   return `on the ${ORDINAL(l.offsetDays + 1)} of every month`;
+}
+
+const MS_DAY = 86_400_000;
+/**
+ * When the first payment would land — a mirror of CalendarLib.nextBoundaryAfter, verified against the
+ * deployed rule. Showing the actual date is what turns four form fields back into a sentence someone can
+ * check before they commit to it.
+ */
+function firstDue(unit: number, offsetDays: number, startAtISO: string): Date {
+  const from = startAtISO ? Date.parse(`${startAtISO}T00:00:00Z`) : Date.now();
+  const d = new Date(from);
+  let base: number;
+  if (unit === 0) base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  else if (unit === 1) {
+    const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+    base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dow * MS_DAY;
+  } else base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+
+  const off = offsetDays * MS_DAY;
+  if (base + off > from) return new Date(base + off);
+  if (unit === 0) return new Date(base + MS_DAY + off);
+  if (unit === 1) return new Date(base + 7 * MS_DAY + off);
+  const b = new Date(base);
+  return new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth() + 1, 1) + off);
 }
 
 const fmtDate = (ts: number) =>
@@ -153,6 +186,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
   };
 
   const active = (saved ?? []).filter((l) => l.active);
+  const incomplete = lines.filter((l) => lineGaps(l).length > 0).length;
   const short = next && balance !== null && next.dueAt > 0 && balance < next.totalDrops;
 
   return (
@@ -204,31 +238,39 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
           const cal = CAL[l.unit];
           return (
             <div key={i} className="hairline space-y-3 rounded-xl border bg-ink-900/40 p-3">
-              <Field label="Pay who?">
+              <Field label="Who gets paid?">
                 <Input value={l.recipient} onChange={(e) => set(i, { recipient: e.target.value })} placeholder="rAlice…" />
               </Field>
-              <div className="flex flex-wrap items-end gap-3">
-                <Field label="How much?">
+
+              {/* A fixed grid, not a wrapping row: with five controls the row broke into ragged lines and
+                  "how many payments" ended up orphaned under a field it has nothing to do with. */}
+              <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+                <Field label="How much, each time?" hint="The exact amount — never more, never less">
                   <div className="flex items-center gap-2">
-                    <NumberInput value={l.amount} onValueChange={(v) => set(i, { amount: v })} decimal placeholder="500" className="w-28" />
-                    <span className="text-[13px] text-mist-500">XRP</span>
+                    <NumberInput value={l.amount} onValueChange={(v) => set(i, { amount: v })} decimal placeholder="500" className="w-full" />
+                    <span className="shrink-0 text-[13px] text-mist-500">XRP</span>
                   </div>
                 </Field>
+
                 <Field label="How often?">
                   <select
                     value={l.unit}
                     onChange={(e) => set(i, { unit: Number(e.target.value), offsetDays: 0 })}
-                    className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                    className="hairline w-full rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
                   >
                     {CAL.map((c) => <option key={c.unit} value={c.unit}>{c.every}</option>)}
                   </select>
                 </Field>
+
                 {cal.offsetMax > 0 && (
-                  <Field label={l.unit === 1 ? "On which day?" : "On which date?"}>
+                  <Field
+                    label={l.unit === 1 ? "On which day?" : "On which date?"}
+                    hint={l.unit === 2 ? "1st–28th, so the date exists in every month — February included" : undefined}
+                  >
                     <select
                       value={l.offsetDays}
                       onChange={(e) => set(i, { offsetDays: Number(e.target.value) })}
-                      className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                      className="hairline w-full rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
                     >
                       {Array.from({ length: cal.offsetMax + 1 }, (_, d) => (
                         <option key={d} value={d}>{l.unit === 1 ? DAY_NAMES[d] : `the ${ORDINAL(d + 1)}`}</option>
@@ -236,18 +278,33 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                     </select>
                   </Field>
                 )}
-                <Field label="How many times?" hint="Required — a schedule has to end">
-                  <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-24" />
+
+                <Field label="How many payments?" hint="Then it stops for good">
+                  <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-full" />
                 </Field>
-                <Field label="Starting from?" hint="Blank = the next one">
+
+                <Field label="Start from" hint="Leave blank to start with the next one">
                   <input
                     type="date"
                     value={l.startAt}
                     onChange={(e) => set(i, { startAt: e.target.value })}
-                    className="hairline rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
+                    className="hairline w-full rounded-lg border bg-ink-850 px-3 py-2 text-[13px] text-mist-100"
                   />
                 </Field>
               </div>
+
+              {/* Read the whole thing back as one sentence. Four correct fields still don't tell you what
+                  you just agreed to; this does, before it's signed. */}
+              {lineGaps(l).length === 0 ? (
+                <p className="text-[12px] leading-relaxed text-signal-300/90">
+                  {formatDrops(xrpToDrops(l.amount))} to <span className="font-mono">{addr(l.recipient.trim())}</span> {describeLine(l)},{" "}
+                  {l.runs} time{Number(l.runs) === 1 ? "" : "s"} — first on{" "}
+                  {fmtDate(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}.
+                </p>
+              ) : (
+                <p className="text-[12px] text-mist-500">Still needed: {lineGaps(l).join(", ")}.</p>
+              )}
+
               {lines.length > 1 && (
                 <button type="button" onClick={() => setLines((ls) => ls.filter((_, n) => n !== i))} className="text-[11px] text-mist-500 hover:text-refuse-500">
                   Remove
@@ -272,7 +329,9 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
       </p>
 
       <div className="flex items-center gap-2">
-        <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save schedule"}</Button>
+        <Button onClick={save} disabled={busy || incomplete > 0}>
+          {busy ? "Saving…" : incomplete > 0 ? `Finish ${incomplete === lines.length && lines.length === 1 ? "the payment" : `${incomplete} payment${incomplete === 1 ? "" : "s"}`}` : "Save schedule"}
+        </Button>
         {active.length > 0 && (
           <button type="button" onClick={cancel} disabled={busy} className="text-[12px] text-mist-500 hover:text-refuse-500">
             Stop everything
