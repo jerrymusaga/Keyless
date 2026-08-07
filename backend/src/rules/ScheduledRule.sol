@@ -47,7 +47,7 @@ contract ScheduledRule is KeylessRuleBase {
         uint64 nextDue; // unix seconds; nothing authorizes before this
         uint32 runsLeft; // payments remaining; always finite (see configure)
         uint8 unit; // CalendarLib.CAL_DAY | CAL_WEEK | CAL_MONTH
-        uint8 offsetDays; // into the window: 14 + CAL_MONTH = the 15th
+        uint8 offsetDays; // into the window: 14 + CAL_MONTH = the 15th; CalendarLib.LAST_DAY = month end
         bool active;
     }
 
@@ -100,9 +100,11 @@ contract ScheduledRule is KeylessRuleBase {
             if (in_.runs == 0) revert Rejected("say how many payments");
             if (bytes(in_.recipient).length == 0) revert Rejected("recipient is empty");
             if (in_.unit > CalendarLib.CAL_MONTH) revert Rejected("bad schedule unit");
-            // Bounded so an offset can never spill into the next window — see CalendarLib.
+            // Bounded so an offset can never spill into the next window — see CalendarLib. The month-end
+            // sentinel is exempt: it names a day rather than counting into one, so it can't overflow.
+            bool monthEnd = in_.unit == CalendarLib.CAL_MONTH && in_.offsetDays == CalendarLib.LAST_DAY;
             uint8 maxOffset = in_.unit == CalendarLib.CAL_MONTH ? 27 : (in_.unit == CalendarLib.CAL_WEEK ? 6 : 0);
-            if (in_.offsetDays > maxOffset) revert Rejected("offset outside the window");
+            if (!monthEnd && in_.offsetDays > maxOffset) revert Rejected("offset outside the window");
 
             uint64 from = in_.startAt == 0 ? uint64(block.timestamp) : in_.startAt;
             if (from < block.timestamp) revert Rejected("start date is in the past");

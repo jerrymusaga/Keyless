@@ -62,6 +62,10 @@ const ORDINAL = (n: number) => {
 };
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+/** CalendarLib.LAST_DAY — "the last day of the month", whatever length that month happens to be. Payroll
+ *  is commonly paid at month end, and no fixed date says that: the 31st is missing from April. */
+const LAST_DAY = 255;
+
 /** Everything a line needs before it can be saved. Returns what's missing, in the order it's asked for. */
 function lineGaps(l: ScheduleLine): string[] {
   const gaps: string[] = [];
@@ -80,6 +84,7 @@ type SavedLine = {
 function describeLine(l: { unit: number; offsetDays: number }): string {
   if (l.unit === 0) return "every day";
   if (l.unit === 1) return `every ${DAY_NAMES[l.offsetDays] ?? "Monday"}`;
+  if (l.offsetDays === LAST_DAY) return "on the last day of every month";
   return `on the ${ORDINAL(l.offsetDays + 1)} of every month`;
 }
 
@@ -92,6 +97,14 @@ const MS_DAY = 86_400_000;
 function firstDue(unit: number, offsetDays: number, startAtISO: string): Date {
   const from = startAtISO ? Date.parse(`${startAtISO}T00:00:00Z`) : Date.now();
   const d = new Date(from);
+
+  // Month end: day 0 of the following month IS the last day of this one, so leap years and 30/31-day
+  // months need no special casing — same trick the contract uses.
+  if (unit === 2 && offsetDays === LAST_DAY) {
+    const endOfThis = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0);
+    return new Date(endOfThis > from ? endOfThis : Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 2, 0));
+  }
+
   let base: number;
   if (unit === 0) base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   else if (unit === 1) {
@@ -265,7 +278,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                 {cal.offsetMax > 0 && (
                   <Field
                     label={l.unit === 1 ? "On which day?" : "On which date?"}
-                    hint={l.unit === 2 ? "1st–28th, so the date exists in every month — February included" : undefined}
+                    hint={l.unit === 2 ? "Pick a date up to the 28th so it exists in every month, or the last day" : undefined}
                   >
                     <select
                       value={l.offsetDays}
@@ -275,6 +288,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                       {Array.from({ length: cal.offsetMax + 1 }, (_, d) => (
                         <option key={d} value={d}>{l.unit === 1 ? DAY_NAMES[d] : `the ${ORDINAL(d + 1)}`}</option>
                       ))}
+                      {l.unit === 2 && <option value={LAST_DAY}>the last day</option>}
                     </select>
                   </Field>
                 )}

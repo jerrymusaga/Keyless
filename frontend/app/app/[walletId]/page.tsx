@@ -176,6 +176,7 @@ const SCHED_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sat
 function schedWhen(l: { unit: number; offsetDays: number }): string {
   if (l.unit === 0) return "every day";
   if (l.unit === 1) return `every ${SCHED_DAYS[l.offsetDays] ?? "Monday"}`;
+  if (l.offsetDays === 255) return "on the last day of every month"; // CalendarLib.LAST_DAY
   const n = l.offsetDays + 1;
   const teen = n % 100;
   const suffix = teen >= 11 && teen <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");

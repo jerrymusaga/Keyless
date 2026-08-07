@@ -96,7 +96,7 @@ export const RULES = {
   fxrp: "0x12AdbaAbE8409fF2f7B8f12e680a6E5698a7D2eE",
   // Payroll / DCA. Each line pins payee + exact amount + calendar slot, so whoever triggers it has no
   // discretion at all. Skips missed runs rather than accruing them. See backend/src/rules/ScheduledRule.sol.
-  scheduled: "0x3C1B2a200137e0E01589f50C469f410706E20177",
+  scheduled: "0x683bDB59E9B7Fb43fAfdf9B84A86d794dBf7Be84",
 } as const;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";

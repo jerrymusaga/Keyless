@@ -14,6 +14,12 @@ library CalendarLib {
     uint8 internal constant CAL_WEEK = 1;
     uint8 internal constant CAL_MONTH = 2;
 
+    /// @notice `offsetDays` sentinel meaning "the last day of the month", whatever length that month is.
+    ///         Payroll is commonly paid at month end, and no fixed offset expresses that: the 31st doesn't
+    ///         exist in April, and the 28th isn't month end except in a non-leap February. 255 is safe as a
+    ///         sentinel because real offsets are bounded well below it (<=27 for months).
+    uint8 internal constant LAST_DAY = 255;
+
     /// @notice Start of the calendar window containing `ts`, at 00:00 UTC.
     function boundaryAtOrBefore(uint64 ts, uint8 unit) internal pure returns (uint64) {
         uint256 dayIdx = uint256(ts) / 86400;
@@ -33,6 +39,19 @@ library CalendarLib {
     ///      restriction is what lets this skip end-of-month clamping entirely — day 28 exists in every
     ///      month, so an offset schedule can never spill into the following one.
     function nextBoundaryAfter(uint64 ts, uint8 unit, uint8 offsetDays) internal pure returns (uint64) {
+        if (unit == CAL_MONTH && offsetDays == LAST_DAY) {
+            (uint256 ly, uint256 lm) = _yearMonth(uint256(ts) / 86400);
+            uint64 endOfThis = _lastDayOf(ly, lm);
+            if (endOfThis > ts) return endOfThis;
+            if (lm == 12) {
+                ly += 1;
+                lm = 1;
+            } else {
+                lm += 1;
+            }
+            return _lastDayOf(ly, lm);
+        }
+
         uint64 base = boundaryAtOrBefore(ts, unit);
         uint64 offset = uint64(offsetDays) * 86400;
 
@@ -50,6 +69,14 @@ library CalendarLib {
             m += 1;
         }
         return uint64(daysFromCivil(y, m, 1) * 86400) + offset;
+    }
+
+    /// @notice 00:00 UTC on the final day of month `m` — derived as the day before the next month starts,
+    ///         so leap years and 30/31-day months need no table and no special cases.
+    function _lastDayOf(uint256 y, uint256 m) private pure returns (uint64) {
+        uint256 ny = m == 12 ? y + 1 : y;
+        uint256 nm = m == 12 ? 1 : m + 1;
+        return uint64((daysFromCivil(ny, nm, 1) - 1) * 86400);
     }
 
     function _yearMonth(uint256 dayIdx) private pure returns (uint256 y, uint256 m) {

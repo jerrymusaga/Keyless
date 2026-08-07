@@ -1243,4 +1243,73 @@ contract KeylessAccountsTest is Test {
         assertEq(due, FEB_2027 + 7 days, "the following Monday");
         assertEq(uint256(due) / 86400 % 7, 4, "unix day 0 is a Thursday, so Mondays are day % 7 == 4");
     }
+
+    /// Month-end payroll: the reason the sentinel exists. No fixed offset expresses "the last day" —
+    /// the 31st doesn't exist in April, and the 28th is only month end in a non-leap February.
+    function test_scheduled_monthEnd_landsOnTheLastDayOfEveryMonth() public {
+        vm.warp(FEB_2027); // 1 Feb 2027, a non-leap year
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 500_000_000, 6);
+        ls[0].offsetDays = 255; // CalendarLib.LAST_DAY
+        vm.prank(alice);
+        r.configure(id, ls);
+
+        // Feb 2027 has 28 days, so the first run is 28 Feb — not the 1st, and not spilled into March.
+        (uint64 feb,) = r.nextRun(id);
+        assertEq(feb, FEB_2027 + 27 days, "28 February 2027");
+
+        vm.warp(feb);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("feb"));
+
+        // March has 31: the schedule must follow the month, not add a fixed period.
+        (uint64 mar,) = r.nextRun(id);
+        assertEq(mar - feb, 31 days, "31 March 2027 is 31 days after 28 February");
+
+        vm.warp(mar);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 500_000_000, bytes32("mar"));
+        (uint64 apr,) = r.nextRun(id);
+        assertEq(apr - mar, 30 days, "30 April, not the 31st that doesn't exist");
+    }
+
+    function test_scheduled_monthEnd_handlesLeapFebruaryAndYearRollover() public {
+        // 1 Jan 2028 — 2028 IS a leap year, so February has 29 days.
+        uint64 jan2028 = 1830297600;
+        vm.warp(jan2028);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 1, 24);
+        ls[0].offsetDays = 255;
+        vm.prank(alice);
+        r.configure(id, ls);
+
+        (uint64 jan,) = r.nextRun(id);
+        assertEq(jan, jan2028 + 30 days, "31 January 2028");
+        vm.warp(jan);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 1, bytes32("jan"));
+
+        (uint64 feb,) = r.nextRun(id);
+        assertEq(feb - jan, 29 days, "29 February 2028, a leap year");
+
+        // Paying ON 31 December must roll the year over rather than overflow the month. (Paying on the
+        // 1st wouldn't test it: December's own month end is still ahead, so the next run stays in 2028.)
+        uint64 dec31 = 1861833600; // 31 Dec 2028
+        vm.warp(dec31);
+        vm.prank(agent);
+        accounts.pay{value: FEE}(id, PAYEE, 1, bytes32("dec"));
+        (uint64 next,) = r.nextRun(id);
+        assertEq(next, dec31 + 31 days, "31 January 2029, across the year boundary");
+    }
+
+    function test_scheduled_monthEndSentinelIsRejectedForWeeklyAndDaily() public {
+        vm.warp(FEB_2027);
+        (ScheduledRule r, bytes32 id) = _scheduled();
+        ScheduledRule.LineInput[] memory ls = _monthly(PAYEE, 1, 6);
+        ls[0].unit = CalendarLib.CAL_WEEK;
+        ls[0].offsetDays = 255;
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "offset outside the window"));
+        r.configure(id, ls);
+    }
 }
