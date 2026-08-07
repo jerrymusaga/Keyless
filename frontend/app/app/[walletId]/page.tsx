@@ -168,7 +168,19 @@ function AccountSkeleton() {
  */
 type Recip = { address: string; requireTag: boolean; tag: number };
 type Escrow = { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string };
-type RuleCfg = { recipients?: Recip[]; capDrops?: string; limit?: Limit; escrow?: Escrow | null };
+type SchedLine = { recipient: string; amount: string; unit: number; offsetDays: number; runs: number; firstDue: string };
+type RuleCfg = { recipients?: Recip[]; capDrops?: string; limit?: Limit; escrow?: Escrow | null; lines?: SchedLine[] };
+
+const SCHED_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+/** "on the 1st of every month" — the sentence the owner filled in, not the fields it was stored as. */
+function schedWhen(l: { unit: number; offsetDays: number }): string {
+  if (l.unit === 0) return "every day";
+  if (l.unit === 1) return `every ${SCHED_DAYS[l.offsetDays] ?? "Monday"}`;
+  const n = l.offsetDays + 1;
+  const teen = n % 100;
+  const suffix = teen >= 11 && teen <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
+  return `on the ${n}${suffix} of every month`;
+}
 
 function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKey: RuleKey }) {
   const [cfg, setCfg] = useState<RuleCfg | null>(null);
@@ -229,6 +241,21 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
     } else {
       notSetUp = !loading;
     }
+  } else if (ruleKey === "scheduled") {
+    const lines = cfg?.lines ?? [];
+    for (const l of lines) {
+      can.push(
+        <>Pay <span className="font-mono text-mist-200">{addr(l.recipient)}</span> exactly{" "}
+        <span className="text-mist-200">{formatDrops(BigInt(l.amount))}</span> {schedWhen(l)}, {l.runs} time{l.runs === 1 ? "" : "s"}</>,
+      );
+    }
+    if (lines.length) {
+      // Worth spelling out: this is the only policy that permits a point rather than a range.
+      cant.push("Pay a penny more, or a penny less");
+      cant.push("Pay early, or twice in the same period");
+      cant.push("Pay anyone not on this list");
+    }
+    notSetUp = !loading && lines.length === 0;
   } else if (ruleKey === "fxrp") {
     can.push("Mint FXRP into this account's own Flare account");
     can.push("Earn in Flare vaults, and bring it home to XRP");
@@ -426,7 +453,9 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
           ? b.recipients.length > 0
           : ruleKey === "escrow"
             ? !!b.escrow
-            : false;
+            : ruleKey === "scheduled"
+              ? Array.isArray(b.lines) && b.lines.length > 0
+              : false;
         if (!stop) setConfigured(ok);
       } catch {
         if (!stop) setConfigured(null); // couldn't verify — stay locked-out (fail closed on an irreversible action)

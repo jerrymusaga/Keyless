@@ -46,13 +46,27 @@ const E = {
     ] },
     { name: "deadline", type: "uint256" }, { name: "fallbackRecipient", type: "string" },
   ] } as AbiEvent,
+  // ScheduledRule. LineAdded carries the payee in the clear (storage keeps only keccak(recipient)), and
+  // ScheduleConfigured closes each configure() call — so the lines belonging to the LATEST configure are
+  // the ones sharing its transaction. Without that delimiter a replaced schedule would show its old lines
+  // alongside its new ones.
+  lineAdded: { type: "event", name: "LineAdded", inputs: [
+    { name: "walletId", type: "bytes32", indexed: true }, { name: "index", type: "uint256", indexed: true },
+    { name: "recipient", type: "string" }, { name: "amount", type: "uint256" },
+    { name: "unit", type: "uint8" }, { name: "offsetDays", type: "uint8" },
+    { name: "runs", type: "uint32" }, { name: "firstDue", type: "uint64" },
+  ] } as AbiEvent,
+  scheduleConfigured: { type: "event", name: "ScheduleConfigured", inputs: [
+    { name: "walletId", type: "bytes32", indexed: true }, { name: "lineCount", type: "uint256" },
+  ] } as AbiEvent,
+  scheduleCancelled: { type: "event", name: "ScheduleCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
   escrowCancelled: { type: "event", name: "ConditionCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
   escrowReleased: { type: "event", name: "ConditionProven", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "votingRound", type: "uint64" },
   ] } as AbiEvent,
 };
 
-type Tagged = { ev: AbiEvent; block: bigint; index: bigint; args: Record<string, unknown> };
+type Tagged = { ev: AbiEvent; block: bigint; index: bigint; tx: string; args: Record<string, unknown> };
 
 /**
  * Turn a pinned attestation request back into a phrase a person can read ("XRP is worth at least $1").
@@ -93,7 +107,7 @@ async function getLogs(rule: RuleKey, ev: AbiEvent, walletId: string): Promise<T
   for (const l of rows) {
     try {
       const d = decodeEventLog({ abi: [ev], data: l.data, topics: l.topics });
-      out.push({ ev, block: BigInt(l.blockNumber), index: BigInt(l.logIndex), args: d.args as Record<string, unknown> });
+      out.push({ ev, block: BigInt(l.blockNumber), index: BigInt(l.logIndex), tx: String(l.transactionHash ?? ""), args: d.args as Record<string, unknown> });
     } catch { /* skip undecodable */ }
   }
   return out;
@@ -130,6 +144,28 @@ export async function POST(req: Request) {
       }
       const recipients = [...map.entries()].map(([address, v]) => ({ address, requireTag: v.requireTag, tag: v.tag }));
       return Response.json({ recipients, capDrops, limit });
+    }
+
+    if (rule === "scheduled") {
+      const events = await replay(rule, [E.lineAdded, E.scheduleConfigured, E.scheduleCancelled], walletId);
+      let currentTx: string | null = null;
+      for (const e of events) {
+        if (e.ev.name === "ScheduleConfigured") currentTx = e.tx;
+        else if (e.ev.name === "ScheduleCancelled") currentTx = null;
+      }
+      const lines = currentTx
+        ? events
+            .filter((e) => e.ev.name === "LineAdded" && e.tx === currentTx)
+            .map((e) => ({
+              recipient: String(e.args.recipient),
+              amount: String(e.args.amount),
+              unit: Number(e.args.unit),
+              offsetDays: Number(e.args.offsetDays),
+              runs: Number(e.args.runs),
+              firstDue: String(e.args.firstDue),
+            }))
+        : [];
+      return Response.json({ lines });
     }
 
     // conditional
