@@ -923,6 +923,18 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
 // FSA XRPL provider wallet (Coston2) — every instruction is a payment here, carrying the reference.
 const FSA_WALLET = "rEyj8nsHLdgt79KJWzXR5BgF7ZbaohbXwq";
+const ASSET_MANAGER_FXRP = "0xc1Ca88b937d0b528842F95d5731ffB586f4fbDFA" as const;
+const FASSETS_FEE_ABI = [
+  { type: "function", name: "getDirectMintingFeeBIPS", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getDirectMintingMinimumFeeUBA", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getDirectMintingExecutorFeeUBA", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+] as const;
+
+/** What FAssets keeps from a mint: max(rate, floor) plus a flat fee to whoever completes it. */
+function mintFeeDrops(xrpDrops: bigint, f: { bips: bigint; minUba: bigint; execUba: bigint }): bigint {
+  const rate = (xrpDrops * f.bips) / 10_000n;
+  return (rate > f.minUba ? rate : f.minUba) + f.execUba;
+}
 const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
 const LOT_FXRP = 10; // FAssets redeems in whole lots; lotSize 1e7 AMG × granularity 1 = 1e7 UBA = 10 FXRP.
 
@@ -967,9 +979,15 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [mintAmt, setMintAmt] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  // A submitted action's staged progress: Submitted → Proving on Flare (~90s FDC round) → balance updated.
+  // A submitted action's staged progress: Submitted → Proving on Flare → balance updated. The FDC round is
+  // ~90s but the whole trip measured 129s (mint) and ~200s (vault deposit), so the tracker must not promise
+  // a deadline it will blow through — a countdown that hits zero mid-wait reads as a failure.
   const [progress, setProgress] = useState<{ startedAt: number; done: boolean; label: string } | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
+  // FAssets charges to mint: a BIPS rate with a floor, plus a flat fee to whoever completes it. Measured
+  // 2026-08-07: 50 XRP in, 49.775 FXRP out. Read live so it stays true if Flare retunes it — a user who
+  // deposits 50 and receives 49.775 with no explanation is being surprised by their own account.
+  const [mintFee, setMintFee] = useState<{ bips: bigint; minUba: bigint; execUba: bigint } | null>(null);
   const [depositAmt, setDepositAmt] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
@@ -1003,6 +1021,14 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       const cv = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "coreVaultAddress" }) as string;
       setCoreVault(cv);
     } catch { /* transient */ }
+    try {
+      const [bips, minUba, execUba] = await Promise.all([
+        publicClient.readContract({ address: ASSET_MANAGER_FXRP, abi: FASSETS_FEE_ABI, functionName: "getDirectMintingFeeBIPS" }),
+        publicClient.readContract({ address: ASSET_MANAGER_FXRP, abi: FASSETS_FEE_ABI, functionName: "getDirectMintingMinimumFeeUBA" }),
+        publicClient.readContract({ address: ASSET_MANAGER_FXRP, abi: FASSETS_FEE_ABI, functionName: "getDirectMintingExecutorFeeUBA" }),
+      ]) as [bigint, bigint, bigint];
+      setMintFee({ bips, minUba, execUba });
+    } catch { /* the estimate just doesn't render */ }
     try {
       const p = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "personalAccountOf", args: [walletId] }) as string;
       const acct = p && p !== ZERO_ADDRESS ? p : null;
@@ -1139,7 +1165,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const progressSteps = () => {
     if (!progress) return null;
     const elapsed = Math.floor((Date.now() - progress.startedAt) / 1000);
-    const remaining = Math.max(0, 90 - elapsed);
+    const remaining = Math.max(0, 150 - elapsed);
     const done = progress.done;
     const icon = (state: "done" | "active" | "todo") =>
       state === "done" ? <span className="text-allow-500">✓</span>
@@ -1147,7 +1173,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       : <span className="inline-block size-1.5 rounded-full bg-ink-600" />;
     const rows: [("done" | "active" | "todo"), string][] = [
       ["done", "Submitted"],
-      [done ? "done" : "active", done ? "Proven on Flare" : remaining > 0 ? `Proving on Flare — ~${remaining}s left` : "Proving on Flare — finalizing…"],
+      [done ? "done" : "active", done ? "Proven on Flare" : remaining > 0 ? `Proving on Flare — about ${remaining}s left` : "Proving on Flare — nearly there…"],
       [done ? "done" : "todo", done ? "FXRP balance updated" : "FXRP balance updates"],
     ];
     return (
@@ -1215,8 +1241,22 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
             <p className="mt-0.5 text-[12px] text-mist-500">
-              Turn XRP from this account into FXRP{coreVault ? <> (via the FAssets Core Vault <code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}. Lands in your Flare account above, ~1–2 min later.
+              Turn XRP from this account into FXRP{coreVault ? <> (via the FAssets Core Vault <code className="font-mono text-mist-400">{addr(coreVault)}</code>)</> : null}. Lands in your Flare account above, about two minutes later.
             </p>
+            {/* Say what arrives before they commit. FAssets keeps a cut, and finding that out afterwards —
+                from a balance that's smaller than the number you typed — is the wrong way to learn it. */}
+            {mintFee && (() => {
+              let drops: bigint;
+              try { drops = xrpToDrops(mintAmt); } catch { return null; }
+              const fee = mintFeeDrops(drops, mintFee);
+              if (fee >= drops) return <p className="mt-2 text-[12px] text-warn-500">That&rsquo;s below the minting fee ({fmtFxrp(fee)} FXRP) — you&rsquo;d receive nothing.</p>;
+              return (
+                <p className="mt-2 text-[12px] text-mist-500">
+                  You&rsquo;ll receive about <span className="text-mist-300">{fmtFxrp(drops - fee)} FXRP</span> — FAssets keeps{" "}
+                  {fmtFxrp(fee)} ({Number(mintFee.bips) / 100}% plus a {fmtFxrp(mintFee.execUba)} completion fee).
+                </p>
+              );
+            })()}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
               <span className="text-[13px] text-mist-500">XRP</span>
@@ -1229,7 +1269,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">② 🌱 Put FXRP to work</p>
             <p className="mt-0.5 text-[12px] text-mist-500">
-              Deposit liquid FXRP into a Flare yield vault to earn — <span className="text-mist-400">Firelight and Upshift are yield protocols on Flare; the number is which vault.</span> You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available.{" "}
+              Deposit liquid FXRP into a Flare yield vault to earn — <span className="text-mist-400">Firelight and Upshift are yield protocols on Flare; the number is which vault.</span> You have <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)} FXRP</span> available. Takes about three minutes to show in the vault.{" "}
               <span className="text-mist-400">Note: pulling it back out is a two-step claim we&rsquo;re still finishing.</span>
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1290,7 +1330,10 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           {/* ③ Bring home */}
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">③ 🏠 Bring home to XRPL</p>
-            <p className="mt-0.5 text-[12px] text-mist-500">Redeem liquid FXRP back to XRP on this account (in lots of {LOT_FXRP} FXRP).</p>
+            <p className="mt-0.5 text-[12px] text-mist-500">
+              Redeem liquid FXRP back to XRP on this account (in lots of {LOT_FXRP} FXRP). Arrives in about two
+              minutes, minus a redemption fee — measured at roughly 0.5%, so {LOT_FXRP * 2} FXRP came home as 19.9 XRP.
+            </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
               <span className="text-[12px] text-mist-500">FXRP</span>
