@@ -6,7 +6,7 @@ import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
-import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, type ConditionKey, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
 /** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
 const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
@@ -223,12 +223,27 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         </Notice>
       )}
 
-      {runsLeft !== null && runsLeft > 0 && (
-        <Notice tone="ok">
-          <span className="font-medium">{runsLeft} payment{runsLeft === 1 ? "" : "s"} left, then it stops.</span>{" "}
-          Every schedule has to end, so locking this account is safe: that is the most that can ever leave it.
-        </Notice>
-      )}
+      {runsLeft !== null && runsLeft > 0 && (() => {
+        // The count alone can't be judged — 12 is a year, 4 billion is longer than the sun has. Lead with
+        // the date, and don't claim locking is safe when the schedule has no end anyone will see.
+        const l0 = active[0];
+        const end = l0 ? scheduleEnd(l0.unit, l0.offsetDays, l0.nextDue, l0.runsLeft) : null;
+        return (
+          <Notice tone={end ? "ok" : "warn"}>
+            {end ? (
+              <>
+                <span className="font-medium">{runsLeft} payment{runsLeft === 1 ? "" : "s"} left, ending {fmtDate(Math.floor(end.getTime() / 1000))}.</span>{" "}
+                After that it stops for good — so locking this account is safe: that is the most that can ever leave it.
+              </>
+            ) : (
+              <>
+                <span className="font-medium">{runsLeft} payments left — far enough out that this schedule never realistically ends.</span>{" "}
+                Don&rsquo;t lock this account: locking is permanent, and it would keep paying until the account is empty.
+              </>
+            )}
+          </Notice>
+        );
+      })()}
 
       {active.length > 0 && (
         <div className="hairline rounded-xl border">
@@ -313,7 +328,13 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                 <p className="text-[12px] leading-relaxed text-signal-300/90">
                   {formatDrops(xrpToDrops(l.amount))} to <span className="font-mono">{addr(l.recipient.trim())}</span> {describeLine(l)},{" "}
                   {l.runs} time{Number(l.runs) === 1 ? "" : "s"} — first on{" "}
-                  {fmtDate(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}.
+                  {fmtDate(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}
+                  {(() => {
+                    const first = Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000);
+                    const end = scheduleEnd(l.unit, l.offsetDays, first, Number(l.runs));
+                    return end ? <>, last on {fmtDate(Math.floor(end.getTime() / 1000))}.</>
+                      : <>. <span className="text-warn-500">That many payments never realistically end — don&rsquo;t lock this account.</span></>;
+                  })()}
                 </p>
               ) : (
                 <p className="text-[12px] text-mist-500">Still needed: {lineGaps(l).join(", ")}.</p>

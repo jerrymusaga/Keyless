@@ -536,6 +536,39 @@ export const POLICY_SLOTS: PolicySlot[] = [
   { question: "When — once it's proven?", rule: "escrow" },
 ];
 
+/** CalendarLib.LAST_DAY — "the last day of the month", whatever length that month is. */
+export const SCHED_LAST_DAY = 255;
+
+/**
+ * When a schedule's final payment lands, or null if it is so far out that the schedule never meaningfully
+ * ends.
+ *
+ * A run count alone can't be read: "12 payments" is a year, "4,000,000,000 payments" is longer than the
+ * solar system has left, and both look equally reasonable typed into a box. The rule guarantees every
+ * schedule terminates — but "terminates" and "ends in your lifetime" are not the same promise, and it is
+ * the second one that makes locking an account safe. So show the date, and say plainly when there isn't
+ * a real one.
+ */
+export function scheduleEnd(unit: number, offsetDays: number, firstDueSec: number, runs: number): Date | null {
+  const f = new Date(firstDueSec * 1000);
+  if (!Number.isFinite(runs) || runs < 1) return null;
+  if (runs === 1) return f;
+  const n = runs - 1;
+  const DAY = 86_400_000;
+
+  let end: Date;
+  if (unit === 0) end = new Date(f.getTime() + n * DAY);
+  else if (unit === 1) end = new Date(f.getTime() + n * 7 * DAY);
+  else if (offsetDays === SCHED_LAST_DAY) end = new Date(Date.UTC(f.getUTCFullYear(), f.getUTCMonth() + n + 1, 0));
+  else end = new Date(Date.UTC(f.getUTCFullYear(), f.getUTCMonth() + n, 1 + offsetDays));
+
+  // A century is well past any schedule a person is actually setting up, and it catches the counts that
+  // overflow the date range outright.
+  const horizon = Date.now() + 100 * 365.25 * DAY;
+  if (Number.isNaN(end.getTime()) || end.getTime() > horizon) return null;
+  return end;
+}
+
 /** Older/retired rule deployments, mapped to a display name so accounts created on them still label
  *  correctly (rather than falling back to "custom policy"). Keys are lowercased addresses. */
 export const LEGACY_RULE_NAMES: Record<string, string> = {

@@ -25,6 +25,7 @@ import {
   xrplTx,
   formatDrops,
   type RuleKey,
+  scheduleEnd,
 } from "@/lib/keyless";
 
 function ruleKeyOf(rule: string): RuleKey | null {
@@ -247,7 +248,13 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
     for (const l of lines) {
       can.push(
         <>Pay <span className="font-mono text-mist-200">{addr(l.recipient)}</span> exactly{" "}
-        <span className="text-mist-200">{formatDrops(BigInt(l.amount))}</span> {schedWhen(l)}, {l.runs} time{l.runs === 1 ? "" : "s"}</>,
+        <span className="text-mist-200">{formatDrops(BigInt(l.amount))}</span> {schedWhen(l)}
+        {(() => {
+          const end = scheduleEnd(l.unit, l.offsetDays, Number(l.firstDue), l.runs);
+          return end
+            ? <>, {l.runs} time{l.runs === 1 ? "" : "s"} — until <span className="text-mist-200">{end.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</span></>
+            : <>, {l.runs} times — with no end date anyone will see</>;
+        })()}</>,
       );
     }
     if (lines.length) {
