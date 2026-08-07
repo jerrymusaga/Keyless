@@ -26,6 +26,7 @@ import {
   formatDrops,
   type RuleKey,
   scheduleEnd,
+  SUPERSEDED_RULES,
 } from "@/lib/keyless";
 
 function ruleKeyOf(rule: string): RuleKey | null {
@@ -88,6 +89,9 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   const local = address ? getAccount(address, wid) : undefined;
   const rk = rule ? ruleKeyOf(rule) : null;
   const hasRule = rule && rule !== ZERO_ADDRESS;
+  // A rule we recognise but no longer deploy. The account isn't ruleless — saying so would be both wrong
+  // and alarming — it's pointing at a version the executors no longer watch.
+  const superseded = hasRule && !rk ? SUPERSEDED_RULES[rule.toLowerCase()] : undefined;
 
   return (
     <motion.div
@@ -140,10 +144,71 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           {rk !== "fxrp" && <SpendPanel walletId={wid} xrpl={xrpl} />}
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
+      ) : superseded ? (
+        <MovePanel walletId={wid} superseded={superseded} onMoved={readChain} />
       ) : (
         <Notice tone="warn">This account has no policy yet, so it can&rsquo;t spend. Attach one to activate it.</Notice>
       )}
     </motion.div>
+  );
+}
+
+/**
+ * An account left on a rule version we've replaced.
+ *
+ * Its funds are safe and the old contract still governs it, but nothing runs its schedule any more and the
+ * settings panel writes to the current rule — so the page would otherwise look empty for no stated reason.
+ * Say what happened, and make the fix one button.
+ */
+function MovePanel({
+  walletId,
+  superseded,
+  onMoved,
+}: {
+  walletId: `0x${string}`;
+  superseded: { name: string; current: RuleKey };
+  onMoved: () => void;
+}) {
+  const { write } = useKeyless();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const move = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await write({
+        address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "setRule",
+        args: [walletId, RULES[superseded.current] as `0x${string}`],
+      });
+      onMoved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message.split("\n")[0] : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <Notice tone="warn">
+        <div className="space-y-2">
+          <div>
+            <span className="font-medium">This account is on an older version of {superseded.name}.</span>{" "}
+            Its money is safe and untouched — but the version it&rsquo;s on is no longer the one being run, so
+            anything it had scheduled won&rsquo;t happen, and its settings won&rsquo;t show below.
+          </div>
+          <div className="text-mist-400">
+            Moving it takes one transaction. You&rsquo;ll need to set the schedule up again afterwards — settings
+            live in the rule, so they don&rsquo;t come across.
+          </div>
+        </div>
+      </Notice>
+      <div className="mt-4 flex items-center gap-3">
+        <Button onClick={move} disabled={busy}>{busy ? "Moving…" : `Move to the current ${superseded.name}`}</Button>
+      </div>
+      {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}
+    </Card>
   );
 }
 

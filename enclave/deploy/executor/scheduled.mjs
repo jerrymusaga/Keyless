@@ -30,7 +30,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const RPC = process.env.RPC_URL || "https://coston2-api.flare.network/ext/C/rpc";
 const KEY = process.env.EXECUTOR_KEY;
-const RULE = process.env.SCHEDULED_RULE || "0x3C1B2a200137e0E01589f50C469f410706E20177";
+const RULE = process.env.SCHEDULED_RULE || "0x683bDB59E9B7Fb43fAfdf9B84A86d794dBf7Be84";
 const ACCOUNTS = process.env.KEYLESS_ACCOUNTS || "0x57eb332D7000752ee82a35cc1A75941F0a619979";
 const EXPLORER = process.env.COSTON2_EXPLORER_API || "https://coston2-explorer.flare.network/api";
 const XRPL_RPC = process.env.XRPL_RPC || "https://s.altnet.rippletest.net:51234";

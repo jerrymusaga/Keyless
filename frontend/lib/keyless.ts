@@ -571,7 +571,24 @@ export function scheduleEnd(unit: number, offsetDays: number, firstDueSec: numbe
 
 /** Older/retired rule deployments, mapped to a display name so accounts created on them still label
  *  correctly (rather than falling back to "custom policy"). Keys are lowercased addresses. */
+/**
+ * Rule deployments that a newer one replaced.
+ *
+ * An account pointing at one is NOT broken — the old contract is still deployed and still governs it. But
+ * the executors watch only the current address, so a schedule there never runs, and the config panel
+ * writes to the current rule, so its settings appear to vanish. That combination reads as "my account is
+ * empty", which is the worst possible way to find out. Name the situation and offer the move instead.
+ */
+export const SUPERSEDED_RULES: Record<string, { name: string; current: RuleKey }> = {
+  // ScheduledRule, redeployed twice on 2026-08-06/07: first to make every schedule finite, then to add
+  // month-end payments. Both were same-day, before anyone depended on them.
+  "0xf1b2fcfe2c8cee9b976fc793c9c5b941c7a7bac0": { name: "Scheduled payments", current: "scheduled" },
+  "0x3c1b2a200137e0e01589f50c469f410706e20177": { name: "Scheduled payments", current: "scheduled" },
+};
+
 export const LEGACY_RULE_NAMES: Record<string, string> = {
+  "0xf1b2fcfe2c8cee9b976fc793c9c5b941c7a7bac0": "Scheduled payments", // superseded — see SUPERSEDED_RULES
+  "0x3c1b2a200137e0e01589f50c469f410706e20177": "Scheduled payments", // superseded — see SUPERSEDED_RULES
   "0xded9303f6b72bd88c3f6a34414ee2935422ab27d": "Spending limit", // RateLimitRule v1
   "0xd4dbdfb1de4f2ccd26bddb795dccf7a9c194df6f": "Spending limit", // RateLimitRule v2
   "0x7ae1dc15acd4766132ac11a67dfdcde03bd8dec2": "Allowlist", // retired AllowlistRule (folded into Exchange)
