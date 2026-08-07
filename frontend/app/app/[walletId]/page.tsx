@@ -794,8 +794,23 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
   const { write, ensureFunded } = useKeyless();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
+  const [spendable, setSpendable] = useState<bigint | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string; tx?: string } | null>(null);
+
+  // Hold the balance rather than checking it on submit: "you don't have that much" is only useful before
+  // the click. XRPL keeps ~1 XRP as an unspendable base reserve, so it's never part of what can be sent.
+  useEffect(() => {
+    if (!xrpl) return;
+    let stop = false;
+    getXrplBalance(xrpl)
+      .then((b) => { if (!stop) setSpendable(b.funded ? (b.drops > 1_000_000n ? b.drops - 1_000_000n : 0n) : 0n); })
+      .catch(() => { /* unknown; the field just won't show a maximum */ });
+    return () => { stop = true; };
+  }, [xrpl]);
+
+  const wanted = (() => { const n = Number(amount); return Number.isFinite(n) && n > 0 ? BigInt(Math.round(n * 1e6)) : null; })();
+  const over = wanted !== null && spendable !== null && wanted > spendable;
 
   const pay = async () => {
     setMsg(null);
@@ -881,8 +896,17 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />
         <div className="flex gap-2">
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
-          <Button onClick={pay} disabled={busy || !xrpl}>{busy ? "…" : "Pay"}</Button>
+          <Button onClick={pay} disabled={busy || !xrpl || over}>{busy ? "…" : "Pay"}</Button>
         </div>
+        {spendable !== null && (
+          <p className={`mt-1.5 text-[11px] ${over ? "text-refuse-500" : "text-mist-500"}`}>
+            {over ? "That's more than this account can send." : <>This account can send <span className="text-mist-400">{formatDrops(spendable)}</span></>}
+            {spendable > 0n && (
+              <> · <button type="button" onClick={() => setAmount(String(Number(spendable) / 1e6))} className="underline decoration-ink-600 underline-offset-2 hover:text-signal-400">use max</button></>
+            )}
+            {" · 1 XRP stays as the ledger reserve"}
+          </p>
+        )}
       </div>
       {msg && (
         <motion.div

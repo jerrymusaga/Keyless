@@ -998,6 +998,29 @@ type Portfolio = {
 const fsaRef = (id: number, value: bigint, vaultId: number): `0x${string}` =>
   toHex((BigInt(id) << 248n) | (value << 160n) | (BigInt(vaultId) << 128n), { size: 32 });
 
+/**
+ * What a field can actually spend, said before it's spent.
+ *
+ * Every amount input here draws on a balance the user can't be expected to hold in their head — XRP on the
+ * ledger for a mint, liquid FXRP for a deposit, whole lots for a redemption. Validating on submit tells
+ * people they were wrong after they've committed; this tells them while they type, and offers the largest
+ * figure that would work.
+ */
+function AmountHint({
+  available, unit, over, note, onMax,
+}: { available: bigint | null; unit: string; over: boolean; note?: string; onMax: () => void }) {
+  if (available === null) return null;
+  return (
+    <p className={`mt-1.5 text-[11px] ${over ? "text-refuse-500" : "text-mist-500"}`}>
+      {over ? `That's more than this account has.` : <>You have <span className="text-mist-400">{fmtFxrp(available)} {unit}</span></>}
+      {available > 0n && (
+        <> · <button type="button" onClick={onMax} className="underline decoration-ink-600 underline-offset-2 hover:text-signal-400">use max</button></>
+      )}
+      {note && <> · {note}</>}
+    </p>
+  );
+}
+
 /** FXRP amount (6 decimals) as a short human string, e.g. 12500000n -> "12.5". */
 const fmtFxrp = (uba: bigint): string => {
   const whole = uba / 1_000_000n;
@@ -1031,6 +1054,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [mintFee, setMintFee] = useState<{ bips: bigint; minUba: bigint; execUba: bigint } | null>(null);
   const [depositAmt, setDepositAmt] = useState("");
   const [pendingExits, setPendingExits] = useState<PendingExit[]>([]);
+  const [xrpBal, setXrpBal] = useState<bigint | null>(null); // XRPL side, for the mint field
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
   const [statusFor, setStatusFor] = useState<"mint" | "deposit" | "redeem" | null>(null); // which action the msg belongs to
@@ -1040,6 +1064,19 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // Whole FXRP portfolio, from one ReaderFacet.getBalances call.
   const liquid = portfolio ? portfolio.fXrp.balance : null;
   const vaultList = portfolio?.vaults ?? [];
+  // What each field may actually spend. XRPL keeps ~1 XRP as an unspendable base reserve, so it is never
+  // part of a mintable balance; redemption is in whole lots, so the max is the largest whole number of them.
+  const XRPL_RESERVE = 1_000_000n;
+  const mintable = xrpBal === null ? null : (xrpBal > XRPL_RESERVE ? xrpBal - XRPL_RESERVE : 0n);
+  const redeemableLots = liquid === null ? null : liquid / BigInt(LOT_FXRP * 1e6);
+  const parse = (v: string): bigint | null => { try { return xrpToDrops(v); } catch { return null; } };
+  const mintWanted = parse(mintAmt);
+  const depositWanted = parse(depositAmt);
+  const homeWanted = parse(home);
+  const mintOver = mintWanted !== null && mintable !== null && mintWanted > mintable;
+  const depositOver = depositWanted !== null && liquid !== null && depositWanted > liquid;
+  const homeOver = homeWanted !== null && liquid !== null && homeWanted > liquid;
+
   const positions = vaultList.filter((v) => v.assets > 0n);
   const inVaults = positions.reduce((s, v) => s + v.assets, 0n);
   const total = (liquid ?? 0n) + inVaults;
@@ -1072,6 +1109,12 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       ]) as [bigint, bigint, bigint];
       setMintFee({ bips, minUba, execUba });
     } catch { /* the estimate just doesn't render */ }
+    // The mint field spends XRP, not FXRP, so it needs the ledger balance — held in state rather than
+    // fetched at click time, so "you don't have that much" appears while typing instead of after.
+    try {
+      const xaddr = await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI as never, functionName: "xrplAddressOf", args: [walletId] }) as string;
+      if (xaddr) { const b = await getXrplBalance(xaddr); setXrpBal(b.funded ? b.drops : 0n); }
+    } catch { /* leave it unknown; the field just won't show a maximum */ }
     try {
       const p = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "personalAccountOf", args: [walletId] }) as string;
       const acct = p && p !== ZERO_ADDRESS ? p : null;
@@ -1337,8 +1380,13 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <NumberInput value={mintAmt} onValueChange={setMintAmt} decimal placeholder="20" className="w-28" />
               <span className="text-[13px] text-mist-500">XRP</span>
-              <Button onClick={mint} disabled={!pa || !!busy}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
+              <Button onClick={mint} disabled={!pa || !!busy || mintOver}>{busy === "Mint" ? "Minting…" : "Mint FXRP"}</Button>
             </div>
+            <AmountHint
+              available={mintable} unit="XRP" over={mintOver}
+              note="1 XRP stays as the ledger reserve"
+              onMax={() => setMintAmt(String(Number(mintable ?? 0n) / 1e6))}
+            />
             {actionStatus("mint")}
           </div>
 
@@ -1364,8 +1412,12 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               </select>
               <NumberInput value={depositAmt} onValueChange={setDepositAmt} decimal placeholder="0" className="w-24 text-right" />
               <span className="text-[12px] text-mist-500">FXRP</span>
-              <Button variant="ghost" onClick={runDeposit} disabled={!!busy}>{busy === "Deposit" ? "…" : "Put to work"}</Button>
+              <Button variant="ghost" onClick={runDeposit} disabled={!!busy || depositOver}>{busy === "Deposit" ? "…" : "Put to work"}</Button>
             </div>
+            <AmountHint
+              available={liquid} unit="FXRP" over={depositOver}
+              onMax={() => setDepositAmt(String(Number(liquid ?? 0n) / 1e6))}
+            />
             {actionStatus("deposit")}
           </div>
 
@@ -1450,8 +1502,15 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
               <span className="text-[12px] text-mist-500">FXRP</span>
-              <Button variant="ghost" onClick={runRedeem} disabled={!!busy}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
+              <Button variant="ghost" onClick={runRedeem} disabled={!!busy || homeOver || (redeemableLots !== null && redeemableLots === 0n)}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
             </div>
+            <AmountHint
+              available={liquid} unit="FXRP" over={homeOver}
+              note={redeemableLots !== null
+                ? (redeemableLots === 0n ? `not enough for one ${LOT_FXRP} FXRP lot yet` : `${redeemableLots} lot${redeemableLots === 1n ? "" : "s"} available`)
+                : undefined}
+              onMax={() => setHome(String(Number(redeemableLots ?? 0n) * LOT_FXRP))}
+            />
             {actionStatus("redeem")}
           </div>
         </>
