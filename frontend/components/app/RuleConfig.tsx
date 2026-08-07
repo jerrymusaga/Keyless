@@ -6,7 +6,7 @@ import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
-import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
 /** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
 const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
@@ -938,11 +938,52 @@ function mintFeeDrops(xrpDrops: bigint, f: { bips: bigint; minUba: bigint; execU
 const FSA_TRIGGER = 100_000n; // 0.1 XRP dust to carry the instruction (the action's value rides in the reference)
 const LOT_FXRP = 10; // FAssets redeems in whole lots; lotSize 1e7 AMG × granularity 1 = 1e7 UBA = 10 FXRP.
 
-// Vault deposit instruction id is TYPE-based (VaultType 1=Firelight, 2=Upshift). Withdrawing back out is a
-// two-step redeem→claim whose claim params (period/date) aren't readable on-chain and aren't returned to the
-// frontend (async execution) — verified live: a redeem parks FXRP in a pending state with no auto-claim — so
-// vault withdrawal isn't wired here yet; positions are view-only.
+// Vault instruction ids are TYPE-based: Firelight 0x11/0x12/0x13, Upshift 0x21/0x22/0x23 —
+// deposit / start-exit / claim.
 const depositInstr = (vaultType: number) => (vaultType === 1 ? 0x11 : 0x21);
+const exitInstr = (vaultType: number) => (vaultType === 1 ? 0x12 : 0x22);
+const claimInstr = (vaultType: number) => (vaultType === 1 ? 0x13 : 0x23);
+
+/** A withdrawal that has left a vault but isn't claimable yet. */
+type PendingExit = { vaultId: bigint; vaultAddress: string; vaultType: number; period: bigint; assets: bigint; claimableAt: number };
+
+/**
+ * Find exits that are queued or ready, by reading the vault directly.
+ *
+ * A redeem files the claim under the period AFTER the one it happened in, and that period must end before
+ * anything can be claimed — so the window worth scanning is small and fixed. No indexer, no stored state:
+ * if the UI is opened on a different device it finds the same pending exits.
+ */
+async function readPendingExits(vaults: readonly VaultBalance[], pa: string): Promise<PendingExit[]> {
+  const out: PendingExit[] = [];
+  const seen = new Set<string>();
+  for (const v of vaults) {
+    if (v.vaultType !== 1 || seen.has(v.vaultAddress)) continue; // Firelight only for now
+    seen.add(v.vaultAddress);
+    try {
+      const addr = v.vaultAddress as `0x${string}`;
+      const [cur, start, cfg] = await Promise.all([
+        publicClient.readContract({ address: addr, abi: FIRELIGHT_VAULT_ABI, functionName: "currentPeriod" }),
+        publicClient.readContract({ address: addr, abi: FIRELIGHT_VAULT_ABI, functionName: "currentPeriodStart" }),
+        publicClient.readContract({ address: addr, abi: FIRELIGHT_VAULT_ABI, functionName: "currentPeriodConfiguration" }),
+      ]);
+      const duration = Number(cfg.duration);
+      for (let p = cur - 2n; p <= cur + 1n; p++) {
+        if (p < 0n) continue;
+        const [assets, claimed] = await Promise.all([
+          publicClient.readContract({ address: addr, abi: FIRELIGHT_VAULT_ABI, functionName: "withdrawalsOf", args: [p, pa as `0x${string}`] }),
+          publicClient.readContract({ address: addr, abi: FIRELIGHT_VAULT_ABI, functionName: "isWithdrawClaimed", args: [p, pa as `0x${string}`] }),
+        ]);
+        if (assets > 0n && !claimed) {
+          // Period p ends — and so becomes claimable — one duration after it begins.
+          const claimableAt = Number(start) + (Number(p - cur) + 1) * duration;
+          out.push({ vaultId: v.vaultId, vaultAddress: v.vaultAddress, vaultType: v.vaultType, period: p, assets, claimableAt });
+        }
+      }
+    } catch { /* a vault that doesn't speak this interface simply contributes nothing */ }
+  }
+  return out;
+}
 
 /** One FXRP vault position from the FSA ReaderFacet. */
 type VaultBalance = { vaultId: bigint; vaultAddress: string; vaultType: number; shares: bigint; assets: bigint };
@@ -989,6 +1030,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // deposits 50 and receives 49.775 with no explanation is being surprised by their own account.
   const [mintFee, setMintFee] = useState<{ bips: bigint; minUba: bigint; execUba: bigint } | null>(null);
   const [depositAmt, setDepositAmt] = useState("");
+  const [pendingExits, setPendingExits] = useState<PendingExit[]>([]);
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
   const [statusFor, setStatusFor] = useState<"mint" | "deposit" | "redeem" | null>(null); // which action the msg belongs to
@@ -1009,6 +1051,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       const p = await publicClient.readContract({ address: ADDRESSES.fsaDiamond, abi: FSA_READER_ABI, functionName: "getBalances", args: [account as `0x${string}`] }) as Portfolio;
       setPortfolio(p);
       // The moment the liquid FXRP balance moves, the pending action has landed on-chain — mark it done.
+      readPendingExits(p.vaults, account).then(setPendingExits).catch(() => { /* leave the last list up */ });
       if (settleBaseline.current !== null && p.fXrp.balance !== settleBaseline.current) {
         settleBaseline.current = null;
         setProgress((pr) => (pr ? { ...pr, done: true } : pr));
@@ -1171,6 +1214,16 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     act("Redeem", fsaRef(0x02, BigInt(lots), 0), `Bringing ${lots * LOT_FXRP} FXRP home`, 130);
   };
 
+  /** Start leaving a vault. Burns the shares now; the FXRP is claimable after the next period ends. */
+  const runExit = (v: VaultBalance) => {
+    act("Exit", fsaRef(exitInstr(v.vaultType), v.assets, Number(v.vaultId)), `Taking ${fmtFxrp(v.assets)} FXRP out of vault ${v.vaultId}`, 210);
+  };
+
+  /** Collect a matured exit. The period number is what identifies which withdrawal to claim. */
+  const runClaim = (e: PendingExit) => {
+    act("Claim", fsaRef(claimInstr(e.vaultType), e.period, Number(e.vaultId)), `Collecting ${fmtFxrp(e.assets)} FXRP`, 210);
+  };
+
   // A little staged tracker so the ~90s wait reads as progress, not a blank spinner. Shown INLINE under
   // whichever action was triggered, so it's visible where you clicked — no scrolling a long panel.
   const progressSteps = () => {
@@ -1330,24 +1383,60 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
           </div>
 
           {/* Positions (view-only for now — see the note) */}
-          {positions.length > 0 && (
+          {(positions.length > 0 || pendingExits.length > 0) && (
             <div className="rounded-xl border hairline bg-ink-900/60 p-4">
               <p className="text-[14px] font-medium text-mist-100">Your positions</p>
               <div className="mt-3 space-y-2">
                 {positions.map((v) => {
                   const key = v.vaultId.toString();
+                  const canExit = v.vaultType === 1; // Firelight; Upshift's exit path isn't verified yet
                   return (
-                    <div key={key} className="flex items-center justify-between gap-2 border-t hairline pt-2 first:border-t-0 first:pt-0">
+                    <div key={key} className="flex flex-wrap items-center justify-between gap-2 border-t hairline pt-2 first:border-t-0 first:pt-0">
                       <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} yield vault <span className="text-mist-500">#{key}</span></p>
-                      <p className="text-[12px]"><span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> <span className="text-mist-500">earning</span></p>
+                      <div className="flex items-center gap-3">
+                        <p className="text-[12px]"><span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> <span className="text-mist-500">earning</span></p>
+                        {canExit && (
+                          <Button variant="ghost" onClick={() => runExit(v)} disabled={!!busy}>{busy === "Exit" ? "…" : "Take it out"}</Button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
-              <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
-                Pulling FXRP back out of a vault is a two-step claim (redeem → claim after the vault&rsquo;s unlock).
-                We&rsquo;re finishing that flow, so withdrawals aren&rsquo;t in the UI yet — your <span className="text-mist-400">liquid</span> FXRP can be brought home any time below.
-              </p>
+
+              {/* Exits that have left the vault but aren't collectable yet. Read straight from the vault,
+                  so this survives a refresh, a different device, and us not being here. */}
+              {pendingExits.length > 0 && (
+                <div className="mt-4 space-y-2 border-t hairline pt-3">
+                  <p className="text-[12px] font-medium text-mist-200">On its way out</p>
+                  {pendingExits.map((e) => {
+                    const ready = Date.now() / 1000 >= e.claimableAt;
+                    return (
+                      <div key={`${e.vaultId}-${e.period}`} className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[12px] text-mist-400">
+                          <span className="font-mono text-mist-200">{fmtFxrp(e.assets)} FXRP</span>{" "}
+                          {ready ? "is ready to collect" : <>unlocks {new Date(e.claimableAt * 1000).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", day: "numeric", month: "short" })}</>}
+                        </p>
+                        <Button variant="ghost" onClick={() => runClaim(e)} disabled={!ready || !!busy}>
+                          {busy === "Claim" ? "…" : ready ? "Collect" : "Locked"}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[11px] leading-relaxed text-mist-500">
+                    Leaving a vault takes two steps: your shares are given up straight away, and the FXRP
+                    becomes collectable once the vault&rsquo;s next period ends. Nothing is lost in between —
+                    it just can&rsquo;t be moved yet.
+                  </p>
+                </div>
+              )}
+
+              {positions.some((v) => v.vaultType !== 1) && (
+                <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
+                  Upshift vaults use a different exit path we haven&rsquo;t verified end to end, so
+                  &ldquo;take it out&rdquo; is only offered on Firelight for now.
+                </p>
+              )}
             </div>
           )}
 

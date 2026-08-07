@@ -44,6 +44,27 @@ export const ADDRESSES = {
 /** VaultType enum from IVaultsFacet: 0 None, 1 Firelight, 2 Upshift. */
 export const VAULT_TYPE_NAME: Record<number, string> = { 0: "—", 1: "Firelight", 2: "Upshift" };
 
+/**
+ * Firelight vault (VaultType 1) — the exit path.
+ *
+ * Leaving a vault is two steps and time-gated, which nothing on the FSA side tells you. A redeem burns
+ * your shares immediately and files the claim under the NEXT period; `claimWithdraw` then requires that
+ * period to have *ended*, so the money is unreachable for up to two period lengths. Measured on Coston2
+ * 2026-08-07: 4-hour periods, a redeem at 17:43 filed under period 84, claimable from 21:52.
+ *
+ * It was previously assumed this needed event indexing. It doesn't — `withdrawalsOf` is a public view, so
+ * scanning a small window of periods around the current one finds every pending exit.
+ */
+export const FIRELIGHT_VAULT_ABI = [
+  { type: "function", name: "currentPeriod", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "currentPeriodStart", stateMutability: "view", inputs: [], outputs: [{ type: "uint48" }] },
+  { type: "function", name: "currentPeriodConfiguration", stateMutability: "view", inputs: [], outputs: [
+    { type: "tuple", components: [{ name: "epoch", type: "uint48" }, { name: "duration", type: "uint48" }, { name: "startingPeriod", type: "uint256" }] },
+  ] },
+  { type: "function", name: "withdrawalsOf", stateMutability: "view", inputs: [{ type: "uint256" }, { type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "isWithdrawClaimed", stateMutability: "view", inputs: [{ type: "uint256" }, { type: "address" }], outputs: [{ type: "bool" }] },
+] as const;
+
 /** FSA ReaderFacet — reads a personal account's whole FXRP portfolio in one call: liquid FXRP + each
  *  vault position (shares + FXRP-equivalent `assets`) + the registered vault list. */
 export const FSA_READER_ABI = [
