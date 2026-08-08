@@ -656,6 +656,11 @@ export function xrplAccount(a: string) {
   return `${XRPL_EXPLORER}/accounts/${a}`;
 }
 
+/** A Flare transaction on the Coston2 explorer — for the on-chain half of an action (the authorisation). */
+export function explorerTx(hash: string) {
+  return `${EXPLORER}/tx/${hash}`;
+}
+
 export function xrplTx(hash: string) {
   return `${XRPL_EXPLORER}/transactions/${hash}`;
 }

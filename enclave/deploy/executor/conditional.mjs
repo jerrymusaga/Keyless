@@ -45,6 +45,10 @@ const ADDR = {
   fdcVerification: "0x906507E0B64bcD494Db73bd0459d1C667e14B933",
 };
 
+// Coston2 explorer, so a logged transaction is one click from being verified rather than a hash you have
+// to go and paste somewhere. Railway linkifies full URLs in its log viewer.
+const EXPLORER_TX = (h) => `${(process.env.COSTON2_EXPLORER_URL || "https://coston2-explorer.flare.network").replace(/\/$/, "")}/tx/${h}`;
+
 const coston2 = defineChain({
   id: 114, name: "Coston2",
   nativeCurrency: { name: "Coston2 Flare", symbol: "C2FLR", decimals: 18 },
@@ -316,7 +320,7 @@ async function watch(pub, wallet) {
             continue;
           }
           const tx = await releaseWith(pub, wallet, c.walletId, da, expectedHash, (m) => console.log(`   ${m}`));
-          if (tx) console.log(`[watch] ✓ released ${short}… -> ${tx}`);
+          if (tx) console.log(`[watch] ✓ released ${short}…\n              ${EXPLORER_TX(tx)}`);
           pending.delete(c.walletId);
           continue;
         }

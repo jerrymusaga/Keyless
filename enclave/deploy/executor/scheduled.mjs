@@ -75,6 +75,10 @@ const ACCOUNTS_ABI = [
   { type: "function", name: "ruleOf", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [{ type: "address" }] },
 ];
 
+// Coston2 explorer, so a logged transaction is one click from being verified rather than a hash you have
+// to go and paste somewhere. Railway linkifies full URLs in its log viewer.
+const EXPLORER_TX = (h) => `${(process.env.COSTON2_EXPLORER_URL || "https://coston2-explorer.flare.network").replace(/\/$/, "")}/tx/${h}`;
+
 const ZERO_REF = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const DROPS = 1_000_000n;
 const xrp = (d) => `${(Number(d) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 })} XRP`;
@@ -188,7 +192,7 @@ async function runAccount(pub, wallet, walletId, payees, { dryRun = false } = {}
         args: [walletId, d.recipient, d.amount, ZERO_REF], value: PAY_FEE,
       });
       await pub.waitForTransactionReceipt({ hash: h });
-      console.log(`[scheduled] ✓ ${short(walletId)} paid ${xrp(d.amount)} -> ${d.recipient}  ${h}`);
+      console.log(`[scheduled] ✓ ${short(walletId)} paid ${xrp(d.amount)} -> ${d.recipient}\n              ${EXPLORER_TX(h)}`);
       ran++;
     } catch (e) {
       // Someone else may have run this line first — pay is permissionless, so a lost race is normal.

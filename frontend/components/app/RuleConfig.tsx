@@ -6,7 +6,7 @@ import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
-import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
+import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
 /** The exact FAssets direct-minting memo (0x4642505266410018 · 0000 · recipient) — mirrors FxrpMintRule.mintMemo. */
 const fxrpMintMemo = (flareAddr: `0x${string}`) => `0x464250526641001800000000${flareAddr.slice(2)}` as `0x${string}`;
@@ -1046,7 +1046,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // A submitted action's staged progress: Submitted → Proving on Flare → balance updated. The FDC round is
   // ~90s but the whole trip measured 129s (mint) and ~200s (vault deposit), so the tracker must not promise
   // a deadline it will blow through — a countdown that hits zero mid-wait reads as a failure.
-  const [progress, setProgress] = useState<{ startedAt: number; done: boolean; label: string; expectSec: number; stalled?: boolean } | null>(null);
+  const [progress, setProgress] = useState<{ startedAt: number; done: boolean; label: string; expectSec: number; stalled?: boolean; tx?: string } | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string } | null>(null);
   // FAssets charges to mint: a BIPS rate with a floor, plus a flat fee to whoever completes it. Measured
   // 2026-08-07: 50 XRP in, 49.775 FXRP out. Read live so it stays true if Flare retunes it — a user who
@@ -1164,10 +1164,10 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
    * The give-up timer used to flip `done: true`, which claimed success at 180s — before a deposit has even
    * happened. A timer running out is not evidence the money moved; it now says so.
    */
-  const settle = useCallback((label: string, expectSec: number) => {
+  const settle = useCallback((label: string, expectSec: number, tx?: string) => {
     if (!pa) return;
     settleBaseline.current = liquid ?? 0n;
-    setProgress({ startedAt: Date.now(), done: false, label, expectSec });
+    setProgress({ startedAt: Date.now(), done: false, label, expectSec, tx });
     setTimeout(() => {
       setProgress((p) => (p && !p.done ? { ...p, stalled: true } : p));
     }, expectSec * 2000);
@@ -1205,10 +1205,10 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
         }
       } catch { /* balance unreadable — proceed and let the chain be the backstop */ }
       const memo = fxrpMintMemo(pa as `0x${string}`);
-      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
+      const hash = await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, coreVault, drops, memo], value: INIT_FEE });
       const sent = mintAmt;
       setMintAmt("");
-      settle(`Minting ${sent} XRP → FXRP`, 140);
+      settle(`Minting ${sent} XRP → FXRP`, 140, hash);
     } catch (e) {
       setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
     } finally {
@@ -1222,8 +1222,8 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     setBusy(label);
     setMsg(null);
     try {
-      await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, FSA_WALLET, FSA_TRIGGER, ref], value: INIT_FEE });
-      settle(friendly, expectSec);
+      const hash = await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, FSA_WALLET, FSA_TRIGGER, ref], value: INIT_FEE });
+      settle(friendly, expectSec, hash);
     } catch (e) {
       let reason = e instanceof Error ? e.message.split("\n")[0] : String(e);
       if (e instanceof BaseError) {
@@ -1293,6 +1293,14 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
         {/* Measured: the FXRP moves in ONE transaction at the end — 10 out and 10 vault shares in, same
             second. So during the wait nothing has left, and saying so is both true and the reassuring
             thing. Without it, three minutes of an unchanged balance reads as a failed click. */}
+        {progress.tx && (
+          <a
+            href={explorerTx(progress.tx)} target="_blank" rel="noreferrer"
+            className="mb-2 inline-block font-mono text-[11px] text-signal-400 underline decoration-ink-600 underline-offset-4 hover:decoration-signal-500"
+          >
+            {addr(progress.tx)} ↗
+          </a>
+        )}
         {!done && (
           <p className="mb-2 text-[11px] leading-relaxed text-mist-500">
             Your balance won&rsquo;t change until this lands — the whole move happens in one transaction at

@@ -66,6 +66,10 @@ const ADDR = {
   assetManagerFXRP: "0xc1Ca88b937d0b528842F95d5731ffB586f4fbDFA",
 };
 
+// Coston2 explorer, so a logged transaction is one click from being verified rather than a hash you have
+// to go and paste somewhere. Railway linkifies full URLs in its log viewer.
+const EXPLORER_TX = (h) => `${(process.env.COSTON2_EXPLORER_URL || "https://coston2-explorer.flare.network").replace(/\/$/, "")}/tx/${h}`;
+
 const coston2 = defineChain({
   id: 114,
   name: "Coston2",
@@ -257,7 +261,7 @@ async function watch(pub, wallet) {
           try {
             const minted = await completeMint(pub, wallet, h, (m) => console.log(`   ${m}`));
             seen.add(h);
-            console.log(`[watch] ✓ minted ${h} -> ${minted}`);
+            console.log(`[watch] ✓ minted ${h} -> ${minted}\n              ${EXPLORER_TX(minted)}`);
           } catch (e) {
             if (isAlreadyMinted(e)) { seen.add(h); /* someone (Flare bot or us) already did it */ }
             else console.error(`[watch] mint ${h} failed: ${e.message || e}`);
