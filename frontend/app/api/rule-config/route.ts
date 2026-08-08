@@ -170,7 +170,7 @@ export async function POST(req: Request) {
 
     // conditional
     const events = await replay(rule, [E.escrowConfigured, E.escrowCancelled, E.escrowReleased], walletId);
-    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string; request?: Record<string, string> } | null = null;
+    let escrow: { recipient: string; maxAmount: string; released: boolean; condition?: string; deadline?: string; fallback?: string; request?: Record<string, string>; provenTx?: string; provenRound?: string } | null = null;
     for (const e of events) {
       if (e.ev.name === "ConditionConfigured") {
         escrow = {
@@ -184,7 +184,10 @@ export async function POST(req: Request) {
           // readout shouldn't only exist while someone is composing the condition.
           request: e.args.request as Record<string, string> | undefined,
         };
-      } else if (e.ev.name === "ConditionProven") { if (escrow) escrow.released = true; }
+      } else if (e.ev.name === "ConditionProven") {
+        // Keep the transaction that did it: "proven" is a claim, and the tx is where someone checks it.
+        if (escrow) { escrow.released = true; escrow.provenTx = e.tx; escrow.provenRound = String(e.args.votingRound ?? ""); }
+      }
       else escrow = null; // ConditionCancelled
     }
     return Response.json({ escrow });

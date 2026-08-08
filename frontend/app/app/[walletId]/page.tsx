@@ -481,12 +481,23 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
         <div className="mt-5">
           <div className="text-xs text-mist-500">Recent payments</div>
           <ul className="mt-2 divide-y divide-ink-800/70">
+            {/* Every row links to the ledger. This list is the account's own account of itself, and a
+                product arguing "don't take our word for it" shouldn't ask you to for its history. */}
             {txs.map((t) => (
-              <li key={t.hash} className="flex items-center justify-between py-2 font-mono text-[12px]">
+              <li key={t.hash} className="flex items-center justify-between gap-3 py-2 font-mono text-[12px]">
                 <span className={t.outgoing ? "text-refuse-400" : "text-allow-500"}>
                   {t.outgoing ? "− " : "+ "}{formatDrops(t.amountDrops)}
                 </span>
-                <span className="text-mist-500">{t.outgoing ? `to ${addr(t.destination)}` : "received"}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-mist-500">{t.outgoing ? `to ${addr(t.destination)}` : "received"}</span>
+                  <a
+                    href={xrplTx(t.hash)} target="_blank" rel="noreferrer"
+                    title={t.hash}
+                    className="shrink-0 text-signal-400 underline decoration-ink-600 underline-offset-4 transition-colors hover:decoration-signal-500"
+                  >
+                    ↗
+                  </a>
+                </span>
               </li>
             ))}
           </ul>

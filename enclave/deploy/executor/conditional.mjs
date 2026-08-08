@@ -342,7 +342,9 @@ async function watch(pub, wallet) {
           pub.readContract({ address: ADDR.fsm, abi: FSM, functionName: "votingEpochDurationSeconds" }),
         ]);
         const round = Number((BigInt(blk.timestamp) - BigInt(first)) / BigInt(dur));
-        console.log(`[watch] ${short}… submitted, round ${round} — will collect the proof when it finalises`);
+        // The attestation request is the FDC half of the story and was previously invisible: the release
+        // tx alone doesn't show that a voting round was asked for, paid for, and waited on.
+        console.log(`[watch] ${short}… attestation requested, round ${round} — will collect the proof when it finalises\n              ${EXPLORER_TX(h)}`);
         pending.set(c.walletId, { abiEncodedRequest, round, since: Date.now() });
        } catch (e) {
         console.error(`[watch] ${c.walletId.slice(0, 10)}… tick failed (will retry): ${e.shortMessage || e.message || e}`);
@@ -388,7 +390,7 @@ async function main() {
 
   const tx = await proveAndRelease(pub, wallet, walletId, strip(cond), expectedHash);
   if (tx) {
-    console.log(`✓ condition proven on-chain. release tx: ${tx}`);
+    console.log(`✓ condition proven on-chain.\n  ${EXPLORER_TX(tx)}`);
     console.log("  the account may now pay its pinned payee, up to its cap.");
   }
 }

@@ -1546,7 +1546,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [fallback, setFallback] = useState("");
   const [checking, setChecking] = useState(false);
   const [onchain, setOnchain] = useState<{ maxAmount: bigint; released: boolean; active: boolean } | null>(null);
-  const [saved, setSaved] = useState<{ condition?: string; recipient?: string; request?: Record<string, string> } | null>(null);
+  const [saved, setSaved] = useState<{ condition?: string; recipient?: string; request?: Record<string, string>; provenTx?: string; provenRound?: string } | null>(null);
   // Tagged with the request it was read for, so a reading can never be shown against a condition it
   // wasn't taken from (e.g. right after the condition is replaced).
   const [savedLive, setSavedLive] = useState<{ key: string; ok: boolean } | null>(null);
@@ -1569,7 +1569,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
         body: JSON.stringify({ rule: "escrow", walletId }),
       });
       const b = await res.json();
-      setSaved(b.escrow ? { condition: b.escrow.condition, recipient: b.escrow.recipient, request: b.escrow.request } : null);
+      setSaved(b.escrow ? { condition: b.escrow.condition, recipient: b.escrow.recipient, request: b.escrow.request, provenTx: b.escrow.provenTx, provenRound: b.escrow.provenRound } : null);
     } catch { /* transient */ }
   }, [walletId]);
   useEffect(() => { load(); }, [load]);
@@ -1680,7 +1680,17 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
       {onchain?.active && (
         <Notice tone={onchain.released ? "ok" : "info"}>
           {onchain.released ? (
-            <><span className="font-medium">Proven ✓</span> — the condition was met and attested on-chain. This account can now pay its payee, up to {formatDrops(onchain.maxAmount)}.</>
+            <div className="space-y-1.5">
+              <div><span className="font-medium">Proven ✓</span> — the condition was met and attested on-chain. This account can now pay its payee, up to {formatDrops(onchain.maxAmount)}.</div>
+              {saved?.provenTx && (
+                <div className="text-[12px] text-mist-400">
+                  Attested in Flare voting round <span className="font-mono text-mist-300">{saved.provenRound}</span> —{" "}
+                  <a href={explorerTx(saved.provenTx)} target="_blank" rel="noreferrer" className="font-mono text-signal-400 underline decoration-ink-600 underline-offset-4 hover:decoration-signal-500">
+                    {addr(saved.provenTx)} ↗
+                  </a>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
               <span className="flex items-center gap-2">

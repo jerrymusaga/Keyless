@@ -166,6 +166,7 @@ async function completeMint(pub, wallet, txHash, log = console.log) {
   const fee = await pub.readContract({ address: ADDR.fdcRequestFeeConfigurations, abi: FEE_ABI, functionName: "getRequestFee", args: [abiEncodedRequest] });
   log(`  requestAttestation (fee ${fee} wei)…`);
   const reqHash = await wallet.writeContract({ address: ADDR.fdcHub, abi: HUB_ABI, functionName: "requestAttestation", args: [abiEncodedRequest], value: fee });
+  log(`  ${EXPLORER_TX(reqHash)}`);
   const rcpt = await pub.waitForTransactionReceipt({ hash: reqHash });
   const block = await pub.getBlock({ blockNumber: rcpt.blockNumber });
 
