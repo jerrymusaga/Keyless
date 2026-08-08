@@ -13,6 +13,8 @@
 // only gas and the per-instruction fee.
 
 import { spawn } from "node:child_process";
+import { createPublicClient, http, defineChain, formatEther } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 const WATCHERS = {
   mint: { script: "executor.mjs", what: "FXRP mints" },
@@ -33,6 +35,35 @@ if (!process.env.EXECUTOR_KEY) {
 }
 
 console.log(`[start] WATCHER=${which} — watching for ${picked.what}`);
+
+/**
+ * Say who we are and what we can afford, on every boot.
+ *
+ * A watcher that runs out of gas fails at the worst possible moment — when a payment finally comes due —
+ * and the error it produces ("the total cost of executing this transaction exceeds the balance") names the
+ * executor account without ever printing it, so there is nothing to go and top up. Logging the address and
+ * balance at startup turns a silent countdown into something you can see, and the warning fires long before
+ * the first missed payment rather than after it.
+ */
+const LOW_BALANCE = 10n ** 18n; // 1 C2FLR — hundreds of instructions, but a clear floor to act on
+try {
+  const coston2 = defineChain({
+    id: 114, name: "Coston2",
+    nativeCurrency: { name: "Coston2 Flare", symbol: "C2FLR", decimals: 18 },
+    rpcUrls: { default: { http: [process.env.RPC_URL || "https://coston2-api.flare.network/ext/C/rpc"] } },
+  });
+  const key = process.env.EXECUTOR_KEY;
+  const account = privateKeyToAccount(key.startsWith("0x") ? key : `0x${key}`);
+  const pub = createPublicClient({ chain: coston2, transport: http() });
+  const balance = await pub.getBalance({ address: account.address });
+  console.log(`[start] executor ${account.address} — ${formatEther(balance)} C2FLR`);
+  if (balance < LOW_BALANCE) {
+    console.warn(`[start] ⚠ LOW BALANCE — top this address up with C2FLR or payments will start failing.`);
+    console.warn(`[start]   Coston2 faucet: https://faucet.flare.network/coston2`);
+  }
+} catch (e) {
+  console.warn(`[start] couldn't read the executor balance: ${e.shortMessage || e.message}`);
+}
 
 // Inherit stdio so the watcher's logs are the service's logs, and forward its exit code so Railway
 // restarts on a genuine crash rather than treating it as a clean stop.

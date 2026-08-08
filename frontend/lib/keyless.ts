@@ -54,6 +54,9 @@ export const VAULT_TYPE_NAME: Record<number, string> = { 0: "—", 1: "Firelight
  *
  * It was previously assumed this needed event indexing. It doesn't — `withdrawalsOf` is a public view, so
  * scanning a small window of periods around the current one finds every pending exit.
+ *
+ * The claim instruction is `0x13` with the PERIOD in the reference's value field — verified end to end on
+ * 2026-08-08: reference 0x1300…0054…0001 moved 10 FXRP back to liquid and flipped isWithdrawClaimed.
  */
 export const FIRELIGHT_VAULT_ABI = [
   { type: "function", name: "currentPeriod", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
