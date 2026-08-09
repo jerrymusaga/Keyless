@@ -6,7 +6,7 @@ import { useKeyless } from "@/components/app/KeylessProvider";
 import { motion } from "motion/react";
 import { Button, Card, Notice, Skeleton, Spinner } from "@/components/app/ui";
 import { ControlKey } from "@/components/app/ControlKey";
-import { listAccounts, type LocalAccount } from "@/lib/accounts";
+import { listAccounts, addAccount, type LocalAccount } from "@/lib/accounts";
 import { publicClient } from "@/lib/clients";
 import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, LEGACY_RULE_NAMES, addr, ZERO_ADDRESS } from "@/lib/keyless";
 
@@ -26,9 +26,37 @@ export default function AppHome() {
 
   const load = useCallback(async () => {
     if (!address) return;
+
+    // Start from what this browser remembers, then ask the chain what this key has ever created and fold
+    // in anything missing. Labels and salts are local-only conveniences; the accounts themselves are not,
+    // and a key on a new browser should find them — otherwise importing your key looks like losing your
+    // money. Accounts recovered this way get a placeholder name until they're renamed.
     const locals = listAccounts(address);
+    let merged = locals;
+    try {
+      const res = await fetch("/api/accounts-of", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ owner: address }), cache: "no-store",
+      });
+      const body = await res.json();
+      if (Array.isArray(body.accounts)) {
+        const known = new Set(locals.map((a) => a.walletId.toLowerCase()));
+        const recovered = body.accounts
+          .filter((a: { walletId: string }) => !known.has(a.walletId.toLowerCase()))
+          .map((a: { walletId: `0x${string}`; createdAt: number }, i: number) => ({
+            walletId: a.walletId,
+            label: `Recovered account ${i + 1}`,
+            salt: "0x" as `0x${string}`, // unknown off this device, and not needed to use the account
+            createdAt: a.createdAt,
+          }));
+        // Remember them here too, so the placeholder survives and can be renamed.
+        recovered.forEach((r: LocalAccount) => addAccount(address, r));
+        merged = [...locals, ...recovered];
+      }
+    } catch { /* offline or explorer down — the local list still works */ }
+
     const enriched = await Promise.all(
-      locals.map(async (a) => {
+      merged.map(async (a) => {
         const rule = (await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ruleOf", args: [a.walletId] })) as `0x${string}`;
         // xrplAddressOf only exists on the writeback contract; tolerate its absence.
         const xrplAddress = (await publicClient
