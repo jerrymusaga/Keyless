@@ -141,7 +141,7 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           <ProofPanel rule={rule} xrpl={xrpl} />
           {/* FXRP has its own mint / earn / bring-home actions, and the rule blocks all other payments —
               so a generic "Spend to an r-address" would only ever be refused. Hide it for FXRP. */}
-          {rk !== "fxrp" && <SpendPanel walletId={wid} xrpl={xrpl} />}
+          {rk !== "fxrp" && <SpendPanel walletId={wid} xrpl={xrpl} ruleKey={rk} />}
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
       ) : superseded ? (
@@ -302,7 +302,7 @@ function CapabilityCard({ walletId, ruleKey }: { walletId: `0x${string}`; ruleKe
       if (e.released) can.push(<><span className="text-allow-500">Condition proven ✓</span> — it can pay now</>);
       else cant.push("Pay anything at all — until the condition is proven");
       if (e.deadline && e.deadline !== "0" && e.fallback) {
-        can.push(<>Return the funds to <span className="font-mono text-mist-200">{addr(e.fallback)}</span> if that hasn&rsquo;t happened by <span className="text-mist-200">{new Date(Number(e.deadline) * 1000).toLocaleDateString(undefined, { timeZone: "UTC" })}</span></>);
+        can.push(<>Return the funds to <span className="font-mono text-mist-200">{addr(e.fallback)}</span> if that hasn&rsquo;t happened by <span className="text-mist-200">{new Date(Number(e.deadline) * 1000).toLocaleString(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC</span></>);
       }
       cant.push("Pay anyone else");
     } else {
@@ -801,7 +801,27 @@ function ProofPanel({ rule, xrpl }: { rule: `0x${string}`; xrpl: string }) {
   );
 }
 
-function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string }) {
+/**
+ * Copy that fits what this policy uses the panel FOR.
+ *
+ * A tester read "Spend" alongside "Try to break it" and asked for one of them to go, since they appeared
+ * to do the same thing. They don't — this one really moves money — but on two policies it isn't a
+ * discretionary spend at all: for Conditional it's how the payee finally gets paid, and for Scheduled it's
+ * a manual run of something already due. Deleting it would have removed the payout; naming it properly is
+ * what was actually wrong.
+ */
+const SPEND_COPY: Partial<Record<RuleKey, { title: string; blurb: string }>> = {
+  escrow: {
+    title: "Release the payment",
+    blurb: "Once the condition is proven, this is how the payee is paid. Before then the rule refuses it — including to you.",
+  },
+  scheduled: {
+    title: "Run a payment now",
+    blurb: "Scheduled payments run on their own. Use this only to push a due one through early — the rule still refuses anything that isn't due.",
+  },
+};
+
+function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl: string; ruleKey: RuleKey }) {
   const { write, ensureFunded } = useKeyless();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -899,9 +919,9 @@ function SpendPanel({ walletId, xrpl }: { walletId: `0x${string}`; xrpl: string 
 
   return (
     <Card>
-      <h2 className="text-[15px] font-medium text-mist-100">Spend</h2>
+      <h2 className="text-[15px] font-medium text-mist-100">{SPEND_COPY[ruleKey]?.title ?? "Spend"}</h2>
       <p className="mt-1 text-[13px] text-mist-400">
-        Runs your rule first. If it refuses, nothing leaves the account.
+        {SPEND_COPY[ruleKey]?.blurb ?? "Runs your rule first. If it refuses, nothing leaves the account."}
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />

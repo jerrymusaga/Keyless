@@ -158,6 +158,21 @@ function firstDue(unit: number, offsetDays: number, startAtISO: string): Date {
 const fmtDate = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
 
+/**
+ * A date AND the time it actually happens, in the reader's own clock.
+ *
+ * Calendar boundaries here are 00:00 UTC, which a tester met the hard way: they scheduled a payment "for
+ * today", nothing had run by 07:50 UTC, and they couldn't tell a wait from a failure. A date alone can't
+ * answer that question — and a time in UTC alone still makes the reader do arithmetic — so show theirs,
+ * and say which zone it is.
+ */
+const fmtWhen = (ts: number) => {
+  const d = new Date(ts * 1000);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local";
+  return `${d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} at ${
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} (${zone})`;
+};
+
 function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
   const [lines, setLines] = useState<ScheduleLine[]>([
     { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "", startAt: "" },
@@ -244,7 +259,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         <Notice tone={short ? "warn" : "info"}>
           <div className="space-y-1">
             <div>
-              <span className="font-medium">Next payment {fmtDate(next.dueAt)}</span> — {formatDrops(next.totalDrops)}<UsdHint drops={next.totalDrops} usd={usd} />
+              <span className="font-medium">Next payment {fmtWhen(next.dueAt)}</span> — {formatDrops(next.totalDrops)}<UsdHint drops={next.totalDrops} usd={usd} />
               {active.length > 1 && <> across {active.length} lines</>}.
             </div>
             {short ? (
@@ -289,7 +304,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                 {formatDrops(l.amount)}<UsdHint drops={l.amount} usd={usd} /> {describeLine(l)}
               </span>
               <span className="shrink-0 text-[11px] text-mist-500">
-                next {fmtDate(l.nextDue)}
+                next {fmtWhen(l.nextDue)}
                 {l.runsLeft > 0 && <> · {l.runsLeft} left</>}
               </span>
             </div>
@@ -348,7 +363,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                   <NumberInput value={l.runs} onValueChange={(v) => set(i, { runs: v })} placeholder="12" className="w-full" />
                 </Field>
 
-                <Field label="Start from" hint="Leave blank to start with the next one">
+                <Field label="Start from" hint="Leave blank to start with the next one. Runs land at 00:00 UTC.">
                   <input
                     type="date"
                     value={l.startAt}
@@ -364,7 +379,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
                 <p className="text-[12px] leading-relaxed text-signal-300/90">
                   {formatDrops(xrpToDrops(l.amount))}<UsdHint drops={xrpToDrops(l.amount)} usd={usd} /> to <span className="font-mono">{addr(l.recipient.trim())}</span> {describeLine(l)},{" "}
                   {l.runs} time{Number(l.runs) === 1 ? "" : "s"} — first on{" "}
-                  {fmtDate(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}
+                  {fmtWhen(Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000))}
                   {(() => {
                     const first = Math.floor(firstDue(l.unit, l.offsetDays, l.startAt).getTime() / 1000);
                     const end = scheduleEnd(l.unit, l.offsetDays, first, Number(l.runs));
@@ -533,7 +548,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
   return (
     <div className="space-y-4">
       {saved && saved.length > 0 && (
-        <Field label="Already allowed" hint="Remove any to stop this account from paying it.">
+        <Field label="Approved recipient list" hint="Remove any to stop this account from paying it.">
           <div className="space-y-2">
             {saved.map((r) => (
               <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -699,7 +714,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
   if (recipients.length === 0 && !data?.limit) return null;
 
   return (
-    <Field label="Already allowed" hint="Remove any to stop this account from paying it.">
+    <Field label="Approved recipient list" hint="Remove any to stop this account from paying it.">
       <div className="space-y-2">
         {recipients.map((r) => (
           <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -817,6 +832,10 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
   return (
     <div className="space-y-4">
+      {/* Two groups, labelled. A tester read these as one list and missed that the allowance applies to
+          every payee, and that adding an address needs its own button. */}
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Who it can pay</p>
+
       <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
 
       <Field label="Who can it pay?" hint="A named list, or anyone — either way it&rsquo;s capped by the allowance below.">
@@ -837,13 +856,24 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
       </Field>
 
       {allowlistOnly && (
-        <Field label="Who's on the list?" hint="It can only pay these — even within the allowance.">
+        <Field label="Add approved recipients" hint="It can only pay these — even within the allowance. Each one needs adding before you save.">
           <div className="flex gap-2">
             <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
-            <Button variant="ghost" onClick={allow} disabled={busy}>Add</Button>
+            <Button onClick={allow} disabled={busy}>Add</Button>
           </div>
         </Field>
       )}
+
+      {/* Switching to "Anyone" leaves the approved list on screen, which read as still-in-force. It isn't:
+          the saved rule stops consulting it. Say so where the confusion happens. */}
+      {!allowlistOnly && (
+        <Notice tone="warn">
+          <span className="font-medium">Anyone means anyone.</span> Any approved recipients above stay
+          listed but stop mattering — saving this lets the account pay any address, up to the allowance.
+        </Notice>
+      )}
+
+      <p className="pt-2 text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">How much it can spend</p>
 
       <Field label="How much can it spend?" hint="Per window for a rolling/calendar limit, or the total for an ‘until a date’ budget.">
         <div className="flex items-center gap-2">
@@ -1542,7 +1572,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   const [kind, setKind] = useState<ConditionKey>("xrpPrice");
   const [vals, setVals] = useState<Record<string, string>>({});
   const [live, setLive] = useState<{ ok: boolean; error?: string } | null>(null);
-  const [deadline, setDeadline] = useState(""); // yyyy-mm-dd; blank = waits forever
+  const [deadline, setDeadline] = useState(""); // yyyy-mm-dd; blank = waits forever (expires 23:59:59 UTC)
   const [fallback, setFallback] = useState("");
   const [checking, setChecking] = useState(false);
   const [onchain, setOnchain] = useState<{ maxAmount: bigint; released: boolean; active: boolean } | null>(null);
