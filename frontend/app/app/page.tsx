@@ -6,6 +6,7 @@ import { useKeyless } from "@/components/app/KeylessProvider";
 import { motion } from "motion/react";
 import { Button, Card, Notice, Skeleton, Spinner } from "@/components/app/ui";
 import { ControlKey } from "@/components/app/ControlKey";
+import { BackupGate } from "@/components/app/BackupGate";
 import { listAccounts, addAccount, type LocalAccount } from "@/lib/accounts";
 import { publicClient } from "@/lib/clients";
 import { ADDRESSES, ACCOUNTS_ABI, RULE_META, RULES, LEGACY_RULE_NAMES, addr, ZERO_ADDRESS } from "@/lib/keyless";
@@ -21,7 +22,7 @@ function ruleName(rule: string): string | null {
 }
 
 export default function AppHome() {
-  const { status, address, balance, create } = useKeyless();
+  const { status, address, balance, create, backedUp } = useKeyless();
   const [rows, setRows] = useState<Row[] | null>(null);
 
   const load = useCallback(async () => {
@@ -97,6 +98,20 @@ export default function AppHome() {
   }
 
   const lowGas = Number(balance) / 1e18 < 0.5;
+
+  // Nothing else until the secret is written down. Offering it beside account creation is how a tester
+  // ended up with accounts and no backup — the option existed, it just never insisted.
+  if (!backedUp) {
+    return (
+      <div className="mx-auto max-w-xl">
+        <h1 className="text-2xl font-medium tracking-[-0.02em] text-mist-100">One thing first</h1>
+        <p className="mt-2 text-sm text-mist-400">Then you can make as many accounts as you like.</p>
+        <div className="mt-6">
+          <BackupGate onDone={load} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

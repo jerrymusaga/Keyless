@@ -12,29 +12,21 @@ import { addr, explorerAddress } from "@/lib/keyless";
  * whatever rule is set), so backing it up is worth a click.
  */
 export function ControlKey() {
-  const { address, exportKey, importKey, forget } = useKeyless();
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const { address, exportSecret, importKey, forget } = useKeyless();
+  const [revealed, setRevealed] = useState<{ secret: string; isPhrase: boolean } | null>(null);
   const [importing, setImporting] = useState(false);
   const [pkInput, setPkInput] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
-  const reveal = () => setRevealed(exportKey());
-  const copy = async () => {
-    if (!revealed) return;
-    await navigator.clipboard.writeText(revealed);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const reveal = () => setRevealed(exportSecret());
   const doImport = () => {
     setErr(null);
     try {
-      const pk = pkInput.trim();
-      importKey((pk.startsWith("0x") ? pk : `0x${pk}`) as `0x${string}`);
+      importKey(pkInput);
       setImporting(false);
       setPkInput("");
     } catch {
-      setErr("That doesn't look like a valid private key.");
+      setErr("That doesn't look like a valid recovery phrase or key.");
     }
   };
 
@@ -64,12 +56,12 @@ export function ControlKey() {
 
       <div className="mt-5 flex flex-wrap gap-2">
         {!revealed ? (
-          <Button variant="ghost" onClick={reveal}>Back up / export key</Button>
+          <Button variant="ghost" onClick={reveal}>Show my recovery phrase</Button>
         ) : (
-          <Button variant="ghost" onClick={() => setRevealed(null)}>Hide key</Button>
+          <Button variant="ghost" onClick={() => setRevealed(null)}>Hide</Button>
         )}
         <Button variant="ghost" onClick={() => { setImporting((v) => !v); setErr(null); }}>
-          Import a key
+          Restore from a phrase
         </Button>
         <Button variant="danger" onClick={forget}>Forget on this device</Button>
       </div>
@@ -77,15 +69,29 @@ export function ControlKey() {
       {revealed && (
         <div className="mt-4 space-y-2">
           <Notice tone="error">
-            Anyone with this key can change your accounts&rsquo; rules. Never paste it into a site or share
-            it. Store it somewhere only you control.
+            Anyone with this can change your accounts&rsquo; rules. Never type it into another site.{" "}
+            <span className="text-mist-300">
+              Losing it doesn&rsquo;t lose your XRP — your accounts keep obeying the rules you set, and can
+              still pay whoever those rules already allow — but the rules could never be changed again.
+            </span>
           </Notice>
-          <div className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3.5 py-3">
-            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{revealed}</code>
-            <button onClick={copy} className="shrink-0 rounded-md border hairline bg-ink-850 px-2.5 py-1 text-[11px] text-mist-300 hover:text-mist-100">
-              {copied ? "copied" : "copy"}
-            </button>
-          </div>
+          {/* No copy button, deliberately: a clipboard is the easiest place for this to leak from, and a
+              twelve-word phrase is short enough to write. Select it by hand if a password manager is where
+              it's going. */}
+          {revealed.isPhrase ? (
+            <ol className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-lg border hairline bg-ink-950 p-4 sm:grid-cols-3">
+              {revealed.secret.split(" ").map((w, i) => (
+                <li key={i} className="flex items-baseline gap-2 font-mono text-[13px]">
+                  <span className="w-5 shrink-0 text-right text-[11px] text-mist-500">{i + 1}</span>
+                  <span className="text-mist-100">{w}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <code className="block break-all rounded-lg border hairline bg-ink-950 px-3.5 py-3 font-mono text-[12px] text-mist-200">
+              {revealed.secret}
+            </code>
+          )}
         </div>
       )}
 
@@ -99,7 +105,7 @@ export function ControlKey() {
             <input
               value={pkInput}
               onChange={(e) => setPkInput(e.target.value)}
-              placeholder="0x… private key"
+              placeholder="your twelve words, or a 0x… key"
               className="w-full rounded-lg border hairline bg-ink-950 px-3.5 py-2.5 font-mono text-sm text-mist-100 outline-none focus:border-signal-500/60"
             />
             <Button onClick={doImport}>Import</Button>

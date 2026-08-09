@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { Abi, PrivateKeyAccount } from "viem";
-import { getOrCreateWallet, peekWallet, clearWallet, importWallet } from "@/lib/embedded";
+import { getOrCreateWallet, peekWallet, clearWallet, importWallet, isBackedUp, markBackedUp } from "@/lib/embedded";
 import { publicClient, walletClientFor } from "@/lib/clients";
 
 /**
@@ -27,9 +27,13 @@ type Ctx = {
   forget: () => void;
   /** Reveal the control key's private key for backup. XRP keys are never exportable — this is only
    *  the browser-held control key. Returns null if there's no wallet. */
+  /** The secret to write down: a recovery phrase where there is one, otherwise the raw key. */
+  exportSecret: () => { secret: string; isPhrase: boolean } | null;
   exportKey: () => `0x${string}` | null;
+  backedUp: boolean;
+  confirmBackedUp: () => void;
   /** Replace this device's control key with an imported one (restore / move device). */
-  importKey: (pk: `0x${string}`) => void;
+  importKey: (secret: string) => void;
   refreshBalance: () => Promise<void>;
   /** Ensure the control key has gas. Returns whether the sponsor is configured. */
   ensureFunded: () => Promise<{ ok: boolean; disabled: boolean; faucet?: string }>;
@@ -42,12 +46,16 @@ const KeylessContext = createContext<Ctx | null>(null);
 export function KeylessProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<PrivateKeyAccount | null>(null);
   const [status, setStatus] = useState<Ctx["status"]>("loading");
+  // Whether the secret has been written down. Tracked here so the app can insist on it before an account
+  // exists — a tester lost nothing but reasonably assumed they had, because nothing ever asked.
+  const [backedUp, setBackedUp] = useState(true);
   const [balance, setBalance] = useState<bigint>(0n);
 
   useEffect(() => {
     const w = peekWallet();
     if (w) {
       setAccount(w.account);
+      setBackedUp(isBackedUp());
       setStatus("ready");
     } else {
       setStatus("none");
@@ -69,6 +77,7 @@ export function KeylessProvider({ children }: { children: React.ReactNode }) {
   const create = useCallback(() => {
     const w = getOrCreateWallet();
     setAccount(w.account);
+    setBackedUp(isBackedUp()); // a freshly generated secret reads as not-yet-written-down
     setStatus("ready");
   }, []);
 
@@ -80,12 +89,20 @@ export function KeylessProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const exportKey = useCallback(() => peekWallet()?.privateKey ?? null, []);
+  const exportSecret = useCallback(() => {
+    const w = peekWallet();
+    if (!w) return null;
+    return w.mnemonic ? { secret: w.mnemonic, isPhrase: true } : { secret: w.privateKey, isPhrase: false };
+  }, []);
 
-  const importKey = useCallback((pk: `0x${string}`) => {
-    const w = importWallet(pk); // throws on malformed key
+  const importKey = useCallback((secret: string) => {
+    const w = importWallet(secret); // throws on a malformed phrase or key
     setAccount(w.account);
+    setBackedUp(true); // importing means they already hold it somewhere
     setStatus("ready");
   }, []);
+
+  const confirmBackedUp = useCallback(() => { markBackedUp(); setBackedUp(true); }, []);
 
   const ensureFunded = useCallback(async () => {
     if (!account) return { ok: false, disabled: false };
@@ -128,6 +145,9 @@ export function KeylessProvider({ children }: { children: React.ReactNode }) {
         create,
         forget,
         exportKey,
+        exportSecret,
+        backedUp,
+        confirmBackedUp,
         importKey,
         refreshBalance,
         ensureFunded,
