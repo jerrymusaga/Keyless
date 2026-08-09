@@ -1085,6 +1085,8 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [depositAmt, setDepositAmt] = useState("");
   const [pendingExits, setPendingExits] = useState<PendingExit[]>([]);
   const [xrpBal, setXrpBal] = useState<bigint | null>(null); // XRPL side, for the mint field
+  const [payees, setPayees] = useState<string[]>([]);
+  const [payeeInput, setPayeeInput] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [home, setHome] = useState("");
   const [statusFor, setStatusFor] = useState<"mint" | "deposit" | "redeem" | null>(null); // which action the msg belongs to
@@ -1145,6 +1147,14 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       const xaddr = await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI as never, functionName: "xrplAddressOf", args: [walletId] }) as string;
       if (xaddr) { const b = await getXrplBalance(xaddr); setXrpBal(b.funded ? b.drops : 0n); }
     } catch { /* leave it unknown; the field just won't show a maximum */ }
+    try {
+      const res = await fetch("/api/rule-config", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rule: "fxrp", walletId }), cache: "no-store",
+      });
+      const b = await res.json();
+      if (Array.isArray(b.payees)) setPayees(b.payees);
+    } catch { /* transient */ }
     try {
       const p = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "personalAccountOf", args: [walletId] }) as string;
       const acct = p && p !== ZERO_ADDRESS ? p : null;
@@ -1285,6 +1295,30 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     const need = BigInt(lots) * BigInt(LOT_FXRP) * 1_000_000n;
     if (liquid !== null && need > liquid) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(liquid)} FXRP liquid.` });
     act("Redeem", fsaRef(0x02, BigInt(lots), 0), `Bringing ${lots * LOT_FXRP} FXRP home`, 130);
+  };
+
+  const addPayee = async () => {
+    try { assertXrpl(payeeInput); } catch (e) { return setMsg({ tone: "error", text: e instanceof Error ? e.message : String(e) }); }
+    setBusy("Payee");
+    try {
+      await write({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "allowPayee", args: [walletId, payeeInput.trim()] });
+      setPayeeInput("");
+      setMsg({ tone: "ok", text: "Added. This account can now pay that address — and still nobody else." });
+      load();
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    } finally { setBusy(null); }
+  };
+
+  const dropPayee = async (r: string) => {
+    setBusy("Payee");
+    try {
+      await write({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "removePayee", args: [walletId, r] });
+      setMsg({ tone: "ok", text: "Removed. This account can no longer pay that address." });
+      load();
+    } catch (e) {
+      setMsg({ tone: "error", text: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    } finally { setBusy(null); }
   };
 
   /** Start leaving a vault. Burns the shares now; the FXRP is claimable after the next period ends. */
@@ -1529,6 +1563,41 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               )}
             </div>
           )}
+
+          {/* ④ Cash out — the step whose absence made this policy one-way */}
+          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+            <p className="text-[14px] font-medium text-mist-100">④ 💸 Where it can cash out</p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-mist-500">
+              XRP you&rsquo;ve brought home can be sent to addresses you approve here — an exchange, your own
+              wallet — and to nobody else. <span className="text-mist-400">FXRP itself still can&rsquo;t be
+              transferred to anyone; bring it home first, which this account can prove it did.</span>
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Input value={payeeInput} onChange={(e) => setPayeeInput(e.target.value)} placeholder="rExchangeDeposit…" className="min-w-0 flex-1" />
+              <Button onClick={addPayee} disabled={!!busy}>{busy === "Payee" ? "…" : "Approve"}</Button>
+            </div>
+            {payees.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {payees.map((r) => (
+                  <div key={r} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
+                    <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{r}</code>
+                    <Copy text={r} />
+                    <button
+                      type="button" onClick={() => dropPayee(r)} disabled={!!busy}
+                      className="shrink-0 rounded-md border border-refuse-500/40 px-2 py-1 text-[11px] text-refuse-500 transition-colors hover:bg-refuse-500/10 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {payees.length === 0 && (
+              <p className="mt-2 text-[11px] text-mist-500">
+                Nothing approved yet, so nothing can leave this account except back into XRP.
+              </p>
+            )}
+          </div>
 
           {/* ③ Bring home */}
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">

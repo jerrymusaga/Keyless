@@ -60,6 +60,13 @@ const E = {
     { name: "walletId", type: "bytes32", indexed: true }, { name: "lineCount", type: "uint256" },
   ] } as AbiEvent,
   scheduleCancelled: { type: "event", name: "ScheduleCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
+  // FxrpRule cash-out payees.
+  payeeAllowed: { type: "event", name: "PayeeAllowed", inputs: [
+    { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
+  ] } as AbiEvent,
+  payeeRemoved: { type: "event", name: "PayeeRemoved", inputs: [
+    { name: "walletId", type: "bytes32", indexed: true }, { name: "recipient", type: "string" },
+  ] } as AbiEvent,
   escrowCancelled: { type: "event", name: "ConditionCancelled", inputs: [{ name: "walletId", type: "bytes32", indexed: true }] } as AbiEvent,
   escrowReleased: { type: "event", name: "ConditionProven", inputs: [
     { name: "walletId", type: "bytes32", indexed: true }, { name: "votingRound", type: "uint64" },
@@ -144,6 +151,16 @@ export async function POST(req: Request) {
       }
       const recipients = [...map.entries()].map(([address, v]) => ({ address, requireTag: v.requireTag, tag: v.tag }));
       return Response.json({ recipients, capDrops, limit });
+    }
+
+    if (rule === "fxrp") {
+      const events = await replay(rule, [E.payeeAllowed, E.payeeRemoved], walletId);
+      const payees = new Set<string>();
+      for (const e of events) {
+        if (e.ev.name === "PayeeAllowed") payees.add(String(e.args.recipient));
+        else payees.delete(String(e.args.recipient));
+      }
+      return Response.json({ payees: [...payees] });
     }
 
     if (rule === "scheduled") {

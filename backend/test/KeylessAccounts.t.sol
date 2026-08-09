@@ -1312,4 +1312,85 @@ contract KeylessAccountsTest is Test {
         vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "offset outside the window"));
         r.configure(id, ls);
     }
+
+    // --- FXRP cash-out: the policy must not be a one-way street ---------------
+
+    string constant CASHOUT = "rMyExchangeDepositXXXXXXXXXXXXXXXXX";
+
+    function test_fxrp_cannotPayAnyoneUntilAPayeeIsApproved() public {
+        bytes32 id = _wallet(alice, "fxrp-out");
+        (FxrpRule rule,) = _fxrp(id);
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, KL_XRPL);
+        rule; // silence unused
+
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, CASHOUT, 5_000_000, bytes32(0));
+    }
+
+    function test_fxrp_approvedPayeeCanBePaid_andOnlyThatPayee() public {
+        bytes32 id = _wallet(alice, "fxrp-out2");
+        (FxrpRule rule,) = _fxrp(id);
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, KL_XRPL);
+
+        vm.prank(alice);
+        rule.allowPayee(id, CASHOUT);
+
+        // XRP redeemed home can now leave — to the approved address and nowhere else.
+        accounts.pay{value: FEE}(id, CASHOUT, 5_000_000, bytes32(0));
+        assertEq(tee.lastRecipient(), CASHOUT);
+
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, ATTACKER, 5_000_000, bytes32(0));
+    }
+
+    /// The guarantee that must NOT weaken: approving a cash-out payee doesn't unlock FXRP itself. The way
+    /// out stays redeem-home-then-pay, which is a path the rule can see every step of.
+    function test_fxrp_approvingAPayeeStillBlocksFxrpTransferOut() public {
+        bytes32 id = _wallet(alice, "fxrp-out3");
+        (FxrpRule rule,) = _fxrp(id);
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, KL_XRPL);
+        vm.prank(alice);
+        rule.allowPayee(id, CASHOUT);
+
+        bytes32 transferOut = bytes32(uint256(0x01) << 248);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "FXRP transfer-out is not allowed"));
+        accounts.pay{value: FEE}(id, FSA_WALLET, 100_000, transferOut);
+    }
+
+    function test_fxrp_payeeCanBeRemoved_andLockFreezesTheList() public {
+        bytes32 id = _wallet(alice, "fxrp-out4");
+        (FxrpRule rule,) = _fxrp(id);
+        vm.prank(reporter);
+        accounts.reportXrplAddress(id, KL_XRPL);
+
+        vm.prank(alice);
+        rule.allowPayee(id, CASHOUT);
+        vm.prank(alice);
+        rule.removePayee(id, CASHOUT);
+        vm.expectRevert(abi.encodeWithSelector(KeylessRuleBase.Rejected.selector, "recipient not allowed"));
+        accounts.pay{value: FEE}(id, CASHOUT, 5_000_000, bytes32(0));
+
+        // Re-approve, then lock: a stolen control key can no longer add itself as a payee.
+        vm.prank(alice);
+        rule.allowPayee(id, CASHOUT);
+        vm.prank(alice);
+        accounts.lockRule(id);
+        vm.prank(alice);
+        vm.expectRevert(KeylessRuleBase.Locked.selector);
+        rule.allowPayee(id, ATTACKER);
+
+        // and the frozen list keeps working
+        accounts.pay{value: FEE}(id, CASHOUT, 5_000_000, bytes32(0));
+    }
+
+    function test_fxrp_onlyOwnerCanApproveAPayee() public {
+        bytes32 id = _wallet(alice, "fxrp-out5");
+        (FxrpRule rule,) = _fxrp(id);
+        vm.prank(bob);
+        vm.expectRevert(KeylessRuleBase.NotWalletOwner.selector);
+        rule.allowPayee(id, ATTACKER);
+    }
 }

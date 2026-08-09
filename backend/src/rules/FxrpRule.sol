@@ -14,12 +14,19 @@ interface IFlareSmartAccounts {
 ///         FXRP to any other address. Even a stolen key can only move value into your own account or bring
 ///         it home; it can't send it to a thief.
 ///
-/// @dev Two payment shapes are permitted, keyed by the XRPL recipient:
+/// @dev Three payment shapes are permitted, keyed by the XRPL recipient:
 ///      - **Core Vault** (FAssets direct minting): the memo must credit THIS account's own FSA personal
 ///        account, computed on-chain as `getPersonalAccount(xrplAddressOf(walletId))`. It is NOT
 ///        configurable, so a stolen control key can't repoint the mint to a thief.
 ///      - **FSA provider wallet** (Flare Smart Accounts): the instruction id (byte 0 of the 32-byte
 ///        reference) must be in the safe set — redeem-home + vault ops — never `0x01` (transfer FXRP out).
+///      - **An approved payee**: XRP brought home can be paid to an address the owner allowlisted. Without
+///        this the account was a one-way street — a tester put it exactly right: "I can't ever sell, spend
+///        or transfer my FXRP, stXRP or XRP because they can't leave an account with this policy." Value
+///        that can enter and never leave is a trap, not a guarantee. Note what is NOT relaxed: FXRP itself
+///        still cannot be transferred to anyone (instruction 0x01 stays refused). The way out is to redeem
+///        home to XRP first, which is a step the rule can see, and only then pay an approved address.
+///
 ///      Direct-mint completion needs an executor + FDC proof (see enclave/deploy/executor); FSA
 ///      instructions are completed by Flare's own live executor. Encodings verified from FAssets source
 ///      (`PaymentReference.DIRECT_MINTING = 0x4642505266410018`) and flare-smart-accounts
@@ -44,7 +51,13 @@ contract FxrpRule is KeylessRuleBase {
 
     address public immutable owner;
 
+    /// @notice walletId => keccak(recipient) => may this account pay it. Non-enumerable, like every other
+    ///         rule's recipient storage; the events carry the address for the UI to replay.
+    mapping(bytes32 => mapping(bytes32 => bool)) public allowedPayee;
+
     event FsaProviderWalletSet(string wallet);
+    event PayeeAllowed(bytes32 indexed walletId, string recipient);
+    event PayeeRemoved(bytes32 indexed walletId, string recipient);
 
     constructor(
         address _accounts,
@@ -95,6 +108,30 @@ contract FxrpRule is KeylessRuleBase {
 
     /// @notice The rule check. Permits exactly two shapes: mint-to-your-own-FSA, or a safe FSA DeFi
     ///         instruction. Everything else — most importantly transferring FXRP out — reverts.
+    /// @notice Let this account pay an XRPL address — the cash-out path for XRP redeemed home.
+    /// @dev Same posture as every other rule: an unlocked account trusts its control key, and `lock()`
+    ///      freezes the list for good. A stolen key can add a payee here exactly as it could on the
+    ///      Exchange policy, and locking is the answer in both cases.
+    function allowPayee(bytes32 walletId, string calldata recipient)
+        external
+        onlyWalletOwner(walletId)
+        notLocked(walletId)
+    {
+        if (bytes(recipient).length == 0) revert Rejected("recipient is empty");
+        allowedPayee[walletId][keccak256(bytes(recipient))] = true;
+        emit PayeeAllowed(walletId, recipient);
+    }
+
+    /// @notice Stop this account from paying an address.
+    function removePayee(bytes32 walletId, string calldata recipient)
+        external
+        onlyWalletOwner(walletId)
+        notLocked(walletId)
+    {
+        delete allowedPayee[walletId][keccak256(bytes(recipient))];
+        emit PayeeRemoved(walletId, recipient);
+    }
+
     function authorize(bytes32 walletId, string calldata recipient, uint256 amount, bytes32 paymentReference)
         external
         view
@@ -122,6 +159,10 @@ contract FxrpRule is KeylessRuleBase {
             if (!safe) revert Rejected("instruction not permitted");
             return;
         }
+
+        // CASH OUT: an address the owner approved. This is what stops the policy being one-way — FXRP
+        // redeemed back to XRP can now reach an exchange or a wallet you named, and nothing else.
+        if (allowedPayee[walletId][rHash]) return;
 
         revert Rejected("recipient not allowed");
     }

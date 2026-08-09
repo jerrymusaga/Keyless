@@ -117,7 +117,7 @@ export const RULES = {
   // Unified FXRP round-trip: mint XRP->FXRP to your OWN Flare Smart Account (computed on-chain, not
   // configurable), then vault ops + redeem-home; transferring FXRP out is blocked. Supersedes the two
   // separate fxrpMint (0xaa0405f9…) + fxrpDefi (0xB5Ab70B4…) rules — see LEGACY_RULE_NAMES.
-  fxrp: "0x12AdbaAbE8409fF2f7B8f12e680a6E5698a7D2eE",
+  fxrp: "0xAABAEA1D7887F1681001513030bB57F7f1897482",
   // Payroll / DCA. Each line pins payee + exact amount + calendar slot, so whoever triggers it has no
   // discretion at all. Skips missed runs rather than accruing them. See backend/src/rules/ScheduledRule.sol.
   scheduled: "0x683bDB59E9B7Fb43fAfdf9B84A86d794dBf7Be84",
@@ -371,6 +371,9 @@ export const RULE_ABIS = {
     { type: "function", name: "coreVaultAddress", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
     { type: "function", name: "fsaProviderWallet", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
     { type: "function", name: "redeemHomeRef", stateMutability: "pure", inputs: [{ name: "lots", type: "uint80" }], outputs: [{ type: "bytes32" }] },
+    { type: "function", name: "allowPayee", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "removePayee", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
+    { type: "function", name: "allowedPayee", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes32" }], outputs: [{ type: "bool" }] },
     { type: "function", name: "vaultRef", stateMutability: "pure", inputs: [{ name: "id", type: "uint8" }, { name: "vaultId", type: "uint16" }, { name: "value", type: "uint80" }], outputs: [{ type: "bytes32" }] },
   ],
   // ScheduledRule. `configure` replaces the whole schedule; `nextRun` is what lets the account warn
@@ -608,6 +611,9 @@ export const SUPERSEDED_RULES: Record<string, { name: string; current: RuleKey }
   // month-end payments. Both were same-day, before anyone depended on them.
   "0xf1b2fcfe2c8cee9b976fc793c9c5b941c7a7bac0": { name: "Scheduled payments", current: "scheduled" },
   "0x3c1b2a200137e0e01589f50c469f410706e20177": { name: "Scheduled payments", current: "scheduled" },
+  // FxrpRule, replaced 2026-08-09 to add the approved-payee cash-out. The old one could mint, earn and
+  // redeem home but never pay anyone, so value entered and could not leave.
+  "0x12adbaabe8409ff2f7b8f12e680a6e5698a7d2ee": { name: "FXRP on Flare", current: "fxrp" },
 };
 
 export const LEGACY_RULE_NAMES: Record<string, string> = {
