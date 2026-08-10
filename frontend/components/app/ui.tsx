@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { nicknameOf, setNickname } from "@/lib/nicknames";
 
 /** A small copy-to-clipboard button. Shows a brief "Copied" confirmation. */
 export function Copy({ text, label = "Copy", className = "" }: { text: string; label?: string; className?: string }) {
@@ -153,6 +154,61 @@ export function Spinner({ label }: { label?: string }) {
     <span className="inline-flex items-center gap-2 text-sm text-mist-400">
       <span className="size-3.5 animate-spin rounded-full border-2 border-ink-600 border-t-signal-500" />
       {label}
+    </span>
+  );
+}
+
+/**
+ * An XRPL address with the name its owner gave it — and always the address too.
+ *
+ * The name is a convenience; the address is what the rule enforces. Showing only the name would be a nice
+ * way to approve the wrong payee, so both are on screen and the name never replaces the thing being
+ * checked. Click it to rename.
+ */
+export function AddressLabel({ owner, address, className = "" }: { owner: string | null; address: string; className?: string }) {
+  const [name, setName] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const refresh = useCallback(() => setName(nicknameOf(owner, address)), [owner, address]);
+  useEffect(() => {
+    refresh();
+    window.addEventListener("kl:nicknames-changed", refresh);
+    return () => window.removeEventListener("kl:nicknames-changed", refresh);
+  }, [refresh]);
+
+  const save = () => {
+    if (owner) setNickname(owner, address, draft);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+          onBlur={save}
+          placeholder="e.g. Binance deposit"
+          className="min-w-0 flex-1 rounded-md border hairline bg-ink-950 px-2 py-1 text-[12px] text-mist-100 outline-none focus:border-signal-500/60"
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span className={`flex min-w-0 flex-col ${className}`}>
+      <button
+        type="button"
+        onClick={() => { setDraft(name ?? ""); setEditing(true); }}
+        className="self-start text-left text-[12px] text-mist-300 underline decoration-dotted decoration-ink-600 underline-offset-4 hover:text-mist-100"
+        title={name ? "Rename" : "Give this address a name"}
+      >
+        {name ?? "name this address"}
+      </button>
+      <code className="min-w-0 break-all font-mono text-[11px] text-mist-500">{address}</code>
     </span>
   );
 }

@@ -339,6 +339,13 @@ export const RULE_ABIS = {
     { type: "function", name: "allow", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "remove", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "recipient", type: "string" }], outputs: [] },
     { type: "function", name: "configure", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "mode", type: "uint8" }, { name: "cap", type: "uint256" }, { name: "param", type: "uint256" }, { name: "maxPerTx", type: "uint256" }, { name: "allowlistOnly", type: "bool" }], outputs: [] },
+    // Live window state — what's left and when it refills. Events give the CONFIG; only the contract
+    // knows how much has been spent since, which is the half a user actually wants to see.
+    { type: "function", name: "limitOf", stateMutability: "view", inputs: [{ type: "bytes32" }], outputs: [
+      { name: "configured", type: "bool" }, { name: "mode", type: "uint8" }, { name: "allowlistOnly", type: "bool" },
+      { name: "cap", type: "uint256" }, { name: "spent", type: "uint256" }, { name: "maxPerTx", type: "uint256" },
+      { name: "windowStart", type: "uint64" }, { name: "param", type: "uint256" },
+    ] },
   ],
   // ConditionalRule. `configure` takes the FULL attestation request — the contract hashes it, so the
   // client can't commit to an encoding the rule won't reproduce — and the expected attested value.

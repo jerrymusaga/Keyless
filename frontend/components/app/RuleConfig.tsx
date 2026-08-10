@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
-import { Button, Field, Input, NumberInput, Notice, Copy } from "./ui";
+import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
 import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
@@ -665,6 +665,72 @@ export function formatLimit(l: Limit): string {
 }
 
 /**
+ * When the allowance refills, and how much is left until then.
+ *
+ * A tester asked for this outright — "not having to manually note the time would be helpful". They're
+ * right that it's the one number a spending limit never told you: the rule knows exactly when the window
+ * turns over and how much has gone, and the UI showed neither.
+ */
+function LimitStatus({ walletId }: { walletId: `0x${string}` }) {
+  const [live, setLive] = useState<{ cap: bigint; spent: bigint; resetAt: number } | null>(null);
+
+  const read = useCallback(async () => {
+    try {
+      const l = (await publicClient.readContract({
+        address: RULES.rateLimit as `0x${string}`, abi: RULE_ABIS.rateLimit as never,
+        functionName: "limitOf", args: [walletId],
+      })) as readonly [boolean, number, boolean, bigint, bigint, bigint, bigint, bigint];
+      const [configured, mode, , cap, spent, , windowStart, param] = l;
+      if (!configured) return setLive(null);
+
+      // Mirrors RateLimitRule: rolling adds the period to the window start; calendar rolls to the next
+      // real boundary; "until a date" is a one-off budget that never refills.
+      let resetAt = 0;
+      if (mode === 0) resetAt = Number(windowStart) + Number(param);
+      else if (mode === 1) {
+        const unit = Number(param); // 0 day, 1 week, 2 month
+        const d = new Date();
+        if (unit === 0) resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) / 1000;
+        else if (unit === 1) {
+          const dow = (d.getUTCDay() + 6) % 7;
+          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + (7 - dow)) / 1000;
+        } else resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
+      }
+      setLive({ cap, spent, resetAt });
+    } catch { /* transient */ }
+  }, [walletId]);
+
+  useEffect(() => {
+    read();
+    const t = setInterval(read, 30_000);
+    const onChange = () => read();
+    window.addEventListener("kl:config-changed", onChange);
+    return () => { clearInterval(t); window.removeEventListener("kl:config-changed", onChange); };
+  }, [read]);
+
+  if (!live) return null;
+  const left = live.cap > live.spent ? live.cap - live.spent : 0n;
+  const pct = live.cap > 0n ? Number((live.spent * 100n) / live.cap) : 0;
+
+  return (
+    <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[13px] text-mist-200">
+          <span className="font-medium text-mist-100">{formatDrops(left)}</span> left to spend
+        </p>
+        {live.resetAt > 0 && (
+          <p className="text-[12px] text-mist-500">refills {fmtWhen(live.resetAt)}</p>
+        )}
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-800">
+        <div className="h-full rounded-full bg-signal-500/70" style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+      <p className="mt-2 text-[11px] text-mist-500">{formatDrops(live.spent)} of {formatDrops(live.cap)} used this window.</p>
+    </div>
+  );
+}
+
+/**
  * "Currently approved" — the live on-chain allowlist for a rule, read back so a refresh (or another
  * device) shows what's saved, with a Remove button per recipient. Used by the multi-recipient rules
  * (allowlist, rateLimit); Exchange has its own richer version with destination tags. `refreshKey` is
@@ -672,7 +738,8 @@ export function formatLimit(l: Limit): string {
  */
 function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; walletId: `0x${string}`; refreshKey: number }) {
   const usd = useXrpUsd();
-  const { write } = useKeyless();
+  // Nicknames are scoped to the control key, so they follow you between accounts but not between people.
+  const { write, address: owner } = useKeyless();
   const [data, setData] = useState<RuleConfigResponse | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -718,7 +785,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
       <div className="space-y-2">
         {recipients.map((r) => (
           <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{r.address}</code>
+            <AddressLabel owner={owner} address={r.address} className="flex-1" />
             <Copy text={r.address} />
             <button
               type="button"
@@ -832,6 +899,8 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
   return (
     <div className="space-y-4">
+      <LimitStatus walletId={walletId} />
+
       {/* Two groups, labelled. A tester read these as one list and missed that the allowance applies to
           every payee, and that adding an address needs its own button. */}
       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Who it can pay</p>
@@ -1066,7 +1135,7 @@ const fmtFxrp = (uba: bigint): string => {
  * address is blocked on-chain — even a stolen key can only move value inside your own account or bring it home.
  */
 function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
-  const { write } = useKeyless();
+  const { write, address } = useKeyless();
   const [pa, setPa] = useState<string | null>(null);
   const [coreVault, setCoreVault] = useState("");
   const [notReady, setNotReady] = useState(false);
@@ -1580,7 +1649,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               <div className="mt-3 space-y-2">
                 {payees.map((r) => (
                   <div key={r} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-                    <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{r}</code>
+                    <AddressLabel owner={address ?? null} address={r} className="flex-1" />
                     <Copy text={r} />
                     <button
                       type="button" onClick={() => dropPayee(r)} disabled={!!busy}
