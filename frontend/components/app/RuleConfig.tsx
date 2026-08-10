@@ -5,6 +5,7 @@ import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel } from "./ui";
 import { publicClient } from "@/lib/clients";
+import { nicknameOf } from "@/lib/nicknames";
 import { getXrplBalance } from "@/lib/xrpl";
 import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
@@ -178,6 +179,10 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
     { recipient: "", amount: "", unit: 2, offsetDays: 0, runs: "", startAt: "" },
   ]);
   const [saved, setSaved] = useState<SavedLine[] | null>(null);
+  // The contract stores keccak(recipient), so the readable address comes from the configure events. Index
+  // order matches: configure() pushes lines in the order it emits them.
+  const [savedPayees, setSavedPayees] = useState<string[]>([]);
+  const { address: owner } = useKeyless();
   const [next, setNext] = useState<{ dueAt: number; totalDrops: bigint } | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [runsLeft, setRunsLeft] = useState<number | null>(null);
@@ -195,6 +200,14 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
         rows.push({ amount: l[1], nextDue: Number(l[2]), runsLeft: Number(l[3]), unit: Number(l[4]), offsetDays: Number(l[5]), active: l[6] });
       }
       setSaved(rows);
+      try {
+        const res = await fetch("/api/rule-config", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rule: "scheduled", walletId }), cache: "no-store",
+        });
+        const b = await res.json();
+        if (Array.isArray(b.lines)) setSavedPayees(b.lines.map((l: { recipient: string }) => l.recipient));
+      } catch { /* the row just shows no payee */ }
       const nr = (await publicClient.readContract({ address: rule, abi, functionName: "nextRun", args: [walletId] })) as readonly [bigint, bigint];
       setNext({ dueAt: Number(nr[0]), totalDrops: nr[1] });
       setRunsLeft(Number((await publicClient.readContract({ address: rule, abi, functionName: "runsRemaining", args: [walletId] })) as bigint));
@@ -302,6 +315,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
             <div key={i} className="flex items-center justify-between gap-3 border-b border-white/5 p-3 last:border-0">
               <span className="text-[13px] text-mist-200">
                 {formatDrops(l.amount)}<UsdHint drops={l.amount} usd={usd} /> {describeLine(l)}
+                {savedPayees[i] && <> to <span className="text-mist-300">{nicknameOf(owner, savedPayees[i]) ?? addr(savedPayees[i])}</span></>}
               </span>
               <span className="shrink-0 text-[11px] text-mist-500">
                 next {fmtWhen(l.nextDue)}
@@ -548,7 +562,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
   return (
     <div className="space-y-4">
       {saved && saved.length > 0 && (
-        <Field label="Approved recipient list" hint="Remove any to stop this account from paying it.">
+        <Field label="Approved recipients" hint="Remove any to stop this account from paying it.">
           <div className="space-y-2">
             {saved.map((r) => (
               <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -781,7 +795,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
   if (recipients.length === 0 && !data?.limit) return null;
 
   return (
-    <Field label="Approved recipient list" hint="Remove any to stop this account from paying it.">
+    <Field label="Approved recipients" hint="Remove any to stop this account from paying it.">
       <div className="space-y-2">
         {recipients.map((r) => (
           <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
@@ -903,10 +917,10 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
       {/* Two groups, labelled. A tester read these as one list and missed that the allowance applies to
           every payee, and that adding an address needs its own button. */}
-      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Who it can pay</p>
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Approved recipients</p>
 
-      <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />
-
+      {/* The choice first, then what it produced. Reading the list before the setting that governs it is
+          backwards — you can't judge the list until you know whether it's being consulted. */}
       <Field label="Who can it pay?" hint="A named list, or anyone — either way it&rsquo;s capped by the allowance below.">
         <div className="flex gap-2">
           {([[true, "Approved recipients only"], [false, "Anyone"]] as const).map(([val, label]) => (
@@ -933,6 +947,8 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </Field>
       )}
 
+      {allowlistOnly && <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />}
+
       {/* Switching to "Anyone" leaves the approved list on screen, which read as still-in-force. It isn't:
           the saved rule stops consulting it. Say so where the confusion happens. */}
       {!allowlistOnly && (
@@ -942,7 +958,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </Notice>
       )}
 
-      <p className="pt-2 text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">How much it can spend</p>
+      <p className="pt-2 text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Set spending rules</p>
 
       <Field label="How much can it spend?" hint="Per window for a rolling/calendar limit, or the total for an ‘until a date’ budget.">
         <div className="flex items-center gap-2">
@@ -1004,7 +1020,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         </div>
       </Field>
 
-      <Field label="Max per payment (optional)" hint="Also cap each single payment, on top of the budget. Leave blank for no per-payment cap.">
+      <Field label="Max per payment (optional)" hint="One cap on any single payment — it applies to every recipient, not to each one separately. On top of the allowance above. Leave blank for none.">
         <NumberInput value={perTx} onValueChange={setPerTx} decimal placeholder="no per-payment cap" className="w-48" />
       </Field>
 
@@ -1718,6 +1734,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
   // Tagged with the request it was read for, so a reading can never be shown against a condition it
   // wasn't taken from (e.g. right after the condition is replaced).
   const [savedLive, setSavedLive] = useState<{ key: string; ok: boolean } | null>(null);
+  const { address: condOwner } = useKeyless();
   const { busy, msg, run } = useConfigAction();
   const tpl = CONDITION_TEMPLATES[kind];
 
@@ -1865,6 +1882,11 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
                 <span className="size-3 shrink-0 animate-spin rounded-full border-2 border-signal-500/30 border-t-signal-400" />
                 <span><span className="font-medium">Locked until it&rsquo;s proven.</span> This account can&rsquo;t pay anyone — not the payee, not you — until Flare attests the condition.</span>
               </span>
+              {saved?.recipient && (
+                <div className="text-[12px] text-mist-400">
+                  Pays <span className="text-mist-300">{nicknameOf(condOwner, saved.recipient) ?? addr(saved.recipient)}</span>
+                </div>
+              )}
               {saved?.condition && (
                 <div className="space-y-1 border-l border-white/10 pl-3 text-[13px] text-mist-400">
                   <div>Watching <span className="text-mist-200">{saved.condition}</span></div>

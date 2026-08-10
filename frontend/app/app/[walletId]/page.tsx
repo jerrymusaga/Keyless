@@ -9,6 +9,7 @@ import { Button, Card, Copy, Input, Notice, Skeleton } from "@/components/app/ui
 import { publicClient } from "@/lib/clients";
 import { getAccount } from "@/lib/accounts";
 import { getXrplBalance, getRecentPayments, type XrplTx } from "@/lib/xrpl";
+import { nicknameOf } from "@/lib/nicknames";
 import { dryRunAuthorize } from "@/lib/showcase";
 import {
   ADDRESSES,
@@ -26,6 +27,7 @@ import {
   formatDrops,
   type RuleKey,
   scheduleEnd,
+  RULE_ABIS,
   SUPERSEDED_RULES,
 } from "@/lib/keyless";
 
@@ -93,6 +95,35 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   // and alarming — it's pointing at a version the executors no longer watch.
   const superseded = hasRule && !rk ? SUPERSEDED_RULES[rule.toLowerCase()] : undefined;
 
+  // Whether a manual payment could succeed right now. null = still checking, and the panel stays hidden
+  // rather than flickering between two claims about what the account can do.
+  const [spendReady, setSpendReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!rk) return;
+    if (rk !== "escrow" && rk !== "scheduled") { setSpendReady(true); return; }
+    let stop = false;
+    const check = async () => {
+      try {
+        if (rk === "escrow") {
+          const c = (await publicClient.readContract({
+            address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never,
+            functionName: "conditionOf", args: [wid],
+          })) as readonly [string, bigint, string, string, bigint, string, bigint, boolean, boolean];
+          if (!stop) setSpendReady(c[7]); // released
+        } else {
+          const [dueAt] = (await publicClient.readContract({
+            address: RULES.scheduled as `0x${string}`, abi: RULE_ABIS.scheduled as never,
+            functionName: "nextRun", args: [wid],
+          })) as readonly [bigint, bigint];
+          if (!stop) setSpendReady(dueAt > 0n && Number(dueAt) <= Math.floor(Date.now() / 1000));
+        }
+      } catch { if (!stop) setSpendReady(false); }
+    };
+    check();
+    const t = setInterval(check, 20_000);
+    return () => { stop = true; clearInterval(t); };
+  }, [rk, wid]);
+
   return (
     <motion.div
       className="space-y-6"
@@ -144,7 +175,22 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           <ProofPanel rule={rule} xrpl={xrpl} />
           {/* FXRP has its own mint / earn / bring-home actions, and the rule blocks all other payments —
               so a generic "Spend to an r-address" would only ever be refused. Hide it for FXRP. */}
-          {rk !== "fxrp" && <SpendPanel walletId={wid} xrpl={xrpl} ruleKey={rk} />}
+          {/* On Conditional and Scheduled, this panel can't do anything until the rule says so — and a
+              tester read it beside "Try to break it" as a second way to do the same thing. It isn't: it's
+              how a proven condition actually pays out. So rather than delete the payout, hide it until it
+              means something, and let the account say why it's absent. */}
+          {rk !== "fxrp" && (spendReady === null ? null : spendReady ? (
+            <SpendPanel walletId={wid} xrpl={xrpl} ruleKey={rk} />
+          ) : (
+            <Card>
+              <h2 className="text-[15px] font-medium text-mist-100">{rk === "escrow" ? "Nothing to release yet" : "Nothing due yet"}</h2>
+              <p className="mt-1 text-[13px] text-mist-400">
+                {rk === "escrow"
+                  ? "Once the condition is proven, this is where the payment is released. Until then the rule refuses every payment — including yours."
+                  : "Scheduled payments run on their own when they fall due. Nothing can be sent before then, by anyone."}
+              </p>
+            </Card>
+          ))}
           {!locked && <LockPanel walletId={wid} ruleKey={rk} onLocked={readChain} />}
         </>
       ) : superseded ? (
@@ -511,13 +557,18 @@ function ReceivePanel({ xrpl }: { xrpl: string }) {
 }
 
 function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; ruleKey: RuleKey; onLocked: () => void }) {
-  const { write } = useKeyless();
+  const { write, address: owner } = useKeyless();
   const [arming, setArming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Whether the policy actually has a configuration. Locking an EMPTY policy is a trap: it freezes the
   // account forever with nothing allowed and no way to fix it. Gate the button until it's configured.
   const [configured, setConfigured] = useState<boolean | null>(null);
+  // Everywhere this account will still be able to send once frozen. A tester asked the right question:
+  // "when a change is needed, the only solution seems to be to empty the wallet and create a new one —
+  // what countermeasures do you suggest?" This is the countermeasure, and it only works before the lock:
+  // make sure at least one permitted destination is somewhere they control.
+  const [exits, setExits] = useState<string[]>([]);
 
   useEffect(() => {
     let stop = false;
@@ -543,6 +594,16 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
             : ruleKey === "scheduled"
               ? Array.isArray(b.lines) && b.lines.length > 0
               : false;
+        const found: string[] = Array.isArray(b.recipients)
+          ? b.recipients.map((r: { address: string }) => r.address)
+          : Array.isArray(b.lines)
+            ? b.lines.map((l: { recipient: string }) => l.recipient)
+            : Array.isArray(b.payees)
+              ? b.payees
+              : b.escrow
+                ? [b.escrow.recipient, b.escrow.fallback].filter(Boolean)
+                : [];
+        if (!stop) setExits([...new Set(found)]);
         if (!stop) setConfigured(ok);
       } catch {
         if (!stop) setConfigured(null); // couldn't verify — stay locked-out (fail closed on an irreversible action)
@@ -582,10 +643,33 @@ function LockPanel({ walletId, ruleKey, onLocked }: { walletId: `0x${string}`; r
             {configured === null ? "Checking policy…" : "Lock policy →"}
           </Button>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Lock it forever?</span>
-            <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
-            <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>No, keep editable</Button>
+          <div className="space-y-3">
+            {/* The one thing worth checking before an irreversible decision: where can the money still go? */}
+            {exits.length > 0 && (
+              <Notice tone="warn">
+                <div className="space-y-1.5">
+                  <div>
+                    <span className="font-medium">Once locked, this account can only ever send to:</span>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {exits.map((e) => (
+                      <li key={e} className="font-mono text-[12px] text-mist-300">
+                        {nicknameOf(owner, e) ? `${nicknameOf(owner, e)} — ` : ""}{e}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="text-mist-400">
+                    Make sure at least one of those is somewhere you control. After locking, that list is the
+                    only way value ever leaves this account — and it can never be added to.
+                  </div>
+                </div>
+              </Notice>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] text-amber-200/90">This can&rsquo;t be undone. Lock it forever?</span>
+              <Button onClick={lock} disabled={busy}>{busy ? "Locking…" : "Yes, lock forever"}</Button>
+              <Button variant="ghost" onClick={() => setArming(false)} disabled={busy}>No, keep editable</Button>
+            </div>
           </div>
         )}
       </div>
