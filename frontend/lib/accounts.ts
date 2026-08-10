@@ -22,10 +22,23 @@ function keyFor(owner: string) {
   return `keyless.accounts.${owner.toLowerCase()}`;
 }
 
+/**
+ * An earlier recovery wrote "Recovered account N" as a real label, so that placeholder is persisted for
+ * anyone who recovered before it was replaced. Strip it on read — a recovered account has no label, and
+ * the UI describes it by its policy and address instead, which is recognisable in a way a number isn't.
+ */
+const PLACEHOLDER = /^Recovered account \d+$/;
+
 export function listAccounts(owner: string): LocalAccount[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(window.localStorage.getItem(keyFor(owner)) ?? "[]");
+    const raw = JSON.parse(window.localStorage.getItem(keyFor(owner)) ?? "[]") as LocalAccount[];
+    const healed = raw.map((a) => (PLACEHOLDER.test(a.label ?? "") ? { ...a, label: "" } : a));
+    // Write back once so it's genuinely gone, not re-hidden on every read.
+    if (healed.some((a, i) => a.label !== raw[i].label)) {
+      window.localStorage.setItem(keyFor(owner), JSON.stringify(healed));
+    }
+    return healed;
   } catch {
     return [];
   }

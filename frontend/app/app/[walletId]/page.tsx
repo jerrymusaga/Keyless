@@ -103,7 +103,10 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
       <div>
         <a href="/app" className="text-xs text-mist-500 hover:text-mist-300">← Your accounts</a>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-medium tracking-[-0.02em] text-mist-100">{local?.label ?? "Account"}</h1>
+          {/* A recovered account has no label — name it by its policy, same as the list does. */}
+          <h1 className="text-2xl font-medium tracking-[-0.02em] text-mist-100">
+            {local?.label || (rk ? `${RULE_META[rk].name} account` : "Account")}
+          </h1>
           {hasRule && rk && (
             <span className="rounded-full border border-signal-500/30 bg-signal-500/10 px-2.5 py-0.5 text-[11px] text-signal-300">
               {RULE_META[rk].name}

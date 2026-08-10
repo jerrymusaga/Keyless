@@ -32,7 +32,7 @@ export default function AppHome() {
     // in anything missing. Labels and salts are local-only conveniences; the accounts themselves are not,
     // and a key on a new browser should find them — otherwise importing your key looks like losing your
     // money. Accounts recovered this way get a placeholder name until they're renamed.
-    const locals = listAccounts(address);
+    const locals = listAccounts(address); // placeholder labels are stripped in the store
     let merged = locals;
     try {
       const res = await fetch("/api/accounts-of", {
