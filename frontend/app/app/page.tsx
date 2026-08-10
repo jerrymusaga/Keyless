@@ -44,9 +44,12 @@ export default function AppHome() {
         const known = new Set(locals.map((a) => a.walletId.toLowerCase()));
         const recovered = body.accounts
           .filter((a: { walletId: string }) => !known.has(a.walletId.toLowerCase()))
-          .map((a: { walletId: `0x${string}`; createdAt: number }, i: number) => ({
+          .map((a: { walletId: `0x${string}`; createdAt: number }) => ({
             walletId: a.walletId,
-            label: `Recovered account ${i + 1}`,
+            // No label: the one you typed only ever lived in the browser you typed it in, and inventing
+            // "Recovered account 3" is worse than letting the row say what the account actually is. The
+            // policy and the XRPL address identify it far better, and both come from the chain.
+            label: "",
             salt: "0x" as `0x${string}`, // unknown off this device, and not needed to use the account
             createdAt: a.createdAt,
           }));
@@ -180,6 +183,9 @@ export default function AppHome() {
 
 function AccountRow({ row }: { row: Row }) {
   const name = ruleName(row.rule);
+  // An account recovered on a new browser has no label. Describe it by what it is rather than by a number:
+  // "Exchange & allowlist account" beside its own r-address is recognisable; "Recovered account 3" is not.
+  const displayName = row.label || (name ? `${name} account` : "Unnamed account");
   const hasRule = row.rule !== ZERO_ADDRESS;
   const [blocked, setBlocked] = useState(0);
   useEffect(() => {
@@ -193,7 +199,7 @@ function AccountRow({ row }: { row: Row }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
-            <span className="truncate text-[15px] font-medium text-mist-100">{row.label}</span>
+            <span className={`truncate text-[15px] font-medium ${row.label ? "text-mist-100" : "text-mist-300"}`}>{displayName}</span>
             {hasRule ? (
               <span className="rounded-full border border-signal-500/30 bg-signal-500/10 px-2 py-0.5 text-[11px] text-signal-300">
                 {name ?? "custom policy"}
