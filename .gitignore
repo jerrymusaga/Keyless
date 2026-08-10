@@ -27,3 +27,7 @@ docs/
 
 # OS
 .DS_Store
+
+# Launch/marketing copy — drafts, threads, scripts. Deliberately not tracked: this is
+# outward-facing wording that changes constantly and shouldn't be reviewed as code.
+content/
