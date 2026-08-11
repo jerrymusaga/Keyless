@@ -224,7 +224,10 @@ export function AddressLabel({
         type="button"
         onClick={() => { setDraft(name ?? ""); setEditing(true); }}
         className={`text-left underline decoration-dotted decoration-ink-600 underline-offset-4 hover:text-mist-100 ${name ? "text-mist-200" : "font-mono text-mist-300"} ${className}`}
-        title={name ? "Rename" : "Give this address a name"}
+        /* The address goes in the tooltip because inline is the one variant that replaces it rather than
+           labelling it. A nickname is text the user typed; it can be wrong, and the address is what the
+           rule actually enforces, so the truth stays one hover away. */
+        title={name ? `${address}\n\nClick to rename` : "Give this address a name"}
       >
         {name ?? short}
       </button>
