@@ -446,7 +446,9 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
 type SavedRecipient = { address: string; requireTag: boolean; tag: number };
 
 function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
-  const { write } = useKeyless();
+  // Exchange keeps its own recipient list rather than using SavedRecipients, because it also shows
+  // destination tags — which is exactly why naming was missing here when it worked everywhere else.
+  const { write, address: owner } = useKeyless();
   const [rows, setRows] = useState<{ address: string; tag: string }[]>([{ address: "", tag: "" }]);
   const [maxTx, setMaxTx] = useState("");
   const [busy, setBusy] = useState(false);
@@ -566,7 +568,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
           <div className="space-y-2">
             {saved.map((r) => (
               <div key={r.address} className="flex items-center gap-2 rounded-lg border hairline bg-ink-950 px-3 py-2">
-                <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-mist-200">{r.address}</code>
+                <AddressLabel owner={owner} address={r.address} className="flex-1" />
                 {r.requireTag && (
                   <span className="shrink-0 rounded bg-signal-500/10 px-1.5 py-0.5 text-[10px] font-medium text-signal-300">tag {r.tag}</span>
                 )}
