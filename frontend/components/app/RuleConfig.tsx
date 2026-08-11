@@ -5,7 +5,6 @@ import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel } from "./ui";
 import { publicClient } from "@/lib/clients";
-import { nicknameOf } from "@/lib/nicknames";
 import { getXrplBalance } from "@/lib/xrpl";
 import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
 
@@ -315,7 +314,7 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
             <div key={i} className="flex items-center justify-between gap-3 border-b border-white/5 p-3 last:border-0">
               <span className="text-[13px] text-mist-200">
                 {formatDrops(l.amount)}<UsdHint drops={l.amount} usd={usd} /> {describeLine(l)}
-                {savedPayees[i] && <> to <span className="text-mist-300">{nicknameOf(owner, savedPayees[i]) ?? addr(savedPayees[i])}</span></>}
+                {savedPayees[i] && <> to <AddressLabel owner={owner} address={savedPayees[i]} inline /></>}
               </span>
               <span className="shrink-0 text-[11px] text-mist-500">
                 next {fmtWhen(l.nextDue)}
@@ -1886,7 +1885,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
               </span>
               {saved?.recipient && (
                 <div className="text-[12px] text-mist-400">
-                  Pays <span className="text-mist-300">{nicknameOf(condOwner, saved.recipient) ?? addr(saved.recipient)}</span>
+                  Pays <AddressLabel owner={condOwner} address={saved.recipient} inline />
                 </div>
               )}
               {saved?.condition && (

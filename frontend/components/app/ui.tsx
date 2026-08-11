@@ -165,7 +165,24 @@ export function Spinner({ label }: { label?: string }) {
  * way to approve the wrong payee, so both are on screen and the name never replaces the thing being
  * checked. Click it to rename.
  */
-export function AddressLabel({ owner, address, className = "" }: { owner: string | null; address: string; className?: string }) {
+export function AddressLabel({
+  owner,
+  address,
+  className = "",
+  inline = false,
+}: {
+  owner: string | null;
+  address: string;
+  className?: string;
+  /**
+   * Render as a single clickable word, for a payee that appears mid-sentence rather than in a list.
+   *
+   * Without this there was nowhere to NAME an address on the Scheduled and Conditional policies — their
+   * payee sits inside a line of prose, and the stacked name-over-address block can't live there. Those
+   * accounts only ever use one policy, so their payees couldn't be named anywhere at all.
+   */
+  inline?: boolean;
+}) {
   const [name, setName] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -195,6 +212,22 @@ export function AddressLabel({ owner, address, className = "" }: { owner: string
           className="min-w-0 flex-1 rounded-md border hairline bg-ink-950 px-2 py-1 text-[12px] text-mist-100 outline-none focus:border-signal-500/60"
         />
       </span>
+    );
+  }
+
+  if (inline) {
+    // Mid-sentence: the short address until it's named, then the name. Never both — the sentence has to
+    // stay readable.
+    const short = address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+    return (
+      <button
+        type="button"
+        onClick={() => { setDraft(name ?? ""); setEditing(true); }}
+        className={`text-left underline decoration-dotted decoration-ink-600 underline-offset-4 hover:text-mist-100 ${name ? "text-mist-200" : "font-mono text-mist-300"} ${className}`}
+        title={name ? "Rename" : "Give this address a name"}
+      >
+        {name ?? short}
+      </button>
     );
   }
 
