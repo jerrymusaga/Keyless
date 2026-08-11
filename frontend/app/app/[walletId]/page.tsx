@@ -46,6 +46,40 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Whether a manual payment could succeed right now. null = still checking, so the panel stays hidden
+  // rather than flickering between two claims about what the account can do.
+  //
+  // Lives up here with the other hooks on purpose: it used to sit below the early returns, which meant it
+  // was skipped whenever the page was still loading — and a component that calls a different number of
+  // hooks between renders crashes outright.
+  const [spendReady, setSpendReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    const k = rule ? ruleKeyOf(rule) : null;
+    if (!k) return;
+    if (k !== "escrow" && k !== "scheduled") { setSpendReady(true); return; }
+    let stop = false;
+    const check = async () => {
+      try {
+        if (k === "escrow") {
+          const c = (await publicClient.readContract({
+            address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never,
+            functionName: "conditionOf", args: [wid],
+          })) as readonly [string, bigint, string, string, bigint, string, bigint, boolean, boolean];
+          if (!stop) setSpendReady(c[7]); // released
+        } else {
+          const [dueAt] = (await publicClient.readContract({
+            address: RULES.scheduled as `0x${string}`, abi: RULE_ABIS.scheduled as never,
+            functionName: "nextRun", args: [wid],
+          })) as readonly [bigint, bigint];
+          if (!stop) setSpendReady(dueAt > 0n && Number(dueAt) <= Math.floor(Date.now() / 1000));
+        }
+      } catch { if (!stop) setSpendReady(false); }
+    };
+    check();
+    const t = setInterval(check, 20_000);
+    return () => { stop = true; clearInterval(t); };
+  }, [rule, wid]);
+
   const readChain = useCallback(async () => {
     const [o, r] = await Promise.all([
       publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "ownerOf", args: [wid] }) as Promise<string>,
@@ -95,34 +129,6 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
   // and alarming — it's pointing at a version the executors no longer watch.
   const superseded = hasRule && !rk ? SUPERSEDED_RULES[rule.toLowerCase()] : undefined;
 
-  // Whether a manual payment could succeed right now. null = still checking, and the panel stays hidden
-  // rather than flickering between two claims about what the account can do.
-  const [spendReady, setSpendReady] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (!rk) return;
-    if (rk !== "escrow" && rk !== "scheduled") { setSpendReady(true); return; }
-    let stop = false;
-    const check = async () => {
-      try {
-        if (rk === "escrow") {
-          const c = (await publicClient.readContract({
-            address: RULES.escrow as `0x${string}`, abi: RULE_ABIS.escrow as never,
-            functionName: "conditionOf", args: [wid],
-          })) as readonly [string, bigint, string, string, bigint, string, bigint, boolean, boolean];
-          if (!stop) setSpendReady(c[7]); // released
-        } else {
-          const [dueAt] = (await publicClient.readContract({
-            address: RULES.scheduled as `0x${string}`, abi: RULE_ABIS.scheduled as never,
-            functionName: "nextRun", args: [wid],
-          })) as readonly [bigint, bigint];
-          if (!stop) setSpendReady(dueAt > 0n && Number(dueAt) <= Math.floor(Date.now() / 1000));
-        }
-      } catch { if (!stop) setSpendReady(false); }
-    };
-    check();
-    const t = setInterval(check, 20_000);
-    return () => { stop = true; clearInterval(t); };
-  }, [rk, wid]);
 
   return (
     <motion.div
