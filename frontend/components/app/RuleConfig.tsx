@@ -166,6 +166,22 @@ const fmtDate = (ts: number) =>
  * answer that question — and a time in UTC alone still makes the reader do arithmetic — so show theirs,
  * and say which zone it is.
  */
+/**
+ * "in 4 hours 12 min" — the same instant as fmtWhen, said the way people actually think about a wait.
+ *
+ * Deliberately never shows seconds: the panel re-reads on a 15s tick, and a ticking seconds display that
+ * only moves every 15s reads as broken. Under a minute it just says so.
+ */
+const fmtIn = (ts: number, now: number) => {
+  const s = ts - now;
+  if (s <= 0) return "now";
+  if (s < 60) return "in under a minute";
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `in ${d} day${d > 1 ? "s" : ""}${h % 24 ? ` ${h % 24}h` : ""}`;
+  if (h >= 1) return `in ${h}h${m % 60 ? ` ${m % 60}m` : ""}`;
+  return `in ${m} min`;
+};
+
 const fmtWhen = (ts: number) => {
   const d = new Date(ts * 1000);
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local";
@@ -687,7 +703,11 @@ export function formatLimit(l: Limit): string {
  * turns over and how much has gone, and the UI showed neither.
  */
 function LimitStatus({ walletId }: { walletId: `0x${string}` }) {
-  const [live, setLive] = useState<{ cap: bigint; spent: bigint; resetAt: number } | null>(null);
+  const [live, setLive] = useState<
+    { cap: bigint; spent: bigint; resetAt: number; mode: number; endsAt: number; stale: boolean } | null
+  >(null);
+  // Drives the countdown. 15s is fine because fmtIn never shows seconds.
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   const read = useCallback(async () => {
     try {
@@ -698,49 +718,99 @@ function LimitStatus({ walletId }: { walletId: `0x${string}` }) {
       const [configured, mode, , cap, spent, , windowStart, param] = l;
       if (!configured) return setLive(null);
 
+      const t = Math.floor(Date.now() / 1000);
+      const d = new Date();
+
       // Mirrors RateLimitRule: rolling adds the period to the window start; calendar rolls to the next
       // real boundary; "until a date" is a one-off budget that never refills.
-      let resetAt = 0;
-      if (mode === 0) resetAt = Number(windowStart) + Number(param);
-      else if (mode === 1) {
+      //
+      // `stale` is the part that matters. The contract rolls the window LAZILY, inside authorize() — so
+      // once a window has elapsed with no payment, the stored `spent` still belongs to the dead window
+      // and the chain will zero it the next time the account pays. Reading it literally told the user
+      // less was available than really was, and dated the refill in the past. Treat it as full.
+      let resetAt = 0, endsAt = 0, stale = false;
+      if (mode === 0) {
+        resetAt = Number(windowStart) + Number(param);
+        stale = t >= resetAt;
+      } else if (mode === 1) {
         const unit = Number(param); // 0 day, 1 week, 2 month
-        const d = new Date();
-        if (unit === 0) resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) / 1000;
-        else if (unit === 1) {
+        let start: number;
+        if (unit === 0) {
+          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
+          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) / 1000;
+        } else if (unit === 1) {
           const dow = (d.getUTCDay() + 6) % 7;
+          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dow) / 1000;
           resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + (7 - dow)) / 1000;
-        } else resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
+        } else {
+          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000;
+          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
+        }
+        stale = Number(windowStart) < start; // spend belongs to a period that has already ended
+      } else {
+        endsAt = Number(param); // one-off budget; never refills
       }
-      setLive({ cap, spent, resetAt });
+
+      setLive({ cap, spent: stale ? 0n : spent, resetAt, mode, endsAt, stale });
+      setNow(t);
     } catch { /* transient */ }
   }, [walletId]);
 
   useEffect(() => {
     read();
     const t = setInterval(read, 30_000);
+    const tick = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
     const onChange = () => read();
     window.addEventListener("kl:config-changed", onChange);
-    return () => { clearInterval(t); window.removeEventListener("kl:config-changed", onChange); };
+    return () => {
+      clearInterval(t); clearInterval(tick);
+      window.removeEventListener("kl:config-changed", onChange);
+    };
   }, [read]);
 
   if (!live) return null;
   const left = live.cap > live.spent ? live.cap - live.spent : 0n;
   const pct = live.cap > 0n ? Number((live.spent * 100n) / live.cap) : 0;
+  const closed = live.mode === 2 && live.endsAt > 0 && now >= live.endsAt;
 
   return (
     <div className="rounded-xl border hairline bg-ink-900/60 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[13px] text-mist-200">
-          <span className="font-medium text-mist-100">{formatDrops(left)}</span> left to spend
+          <span className="font-medium text-mist-100">{formatDrops(closed ? 0n : left)}</span> left to spend
         </p>
-        {live.resetAt > 0 && (
-          <p className="text-[12px] text-mist-500">refills {fmtWhen(live.resetAt)}</p>
+        {/* The countdown answers "when?"; the date underneath answers "when exactly?" — a tester had to
+            note the time by hand to work this out. */}
+        {/* A stale ROLLING window has no knowable refill time — the next period only starts when the
+            account next pays, so showing a date would be a guess. Calendar boundaries are absolute and
+            stay correct either way. */}
+        {live.resetAt > 0 && !(live.mode === 0 && live.stale) && (
+          <p className="text-right text-[12px] text-mist-500">
+            <span className="text-mist-300">refills {fmtIn(live.resetAt, now)}</span>
+            <br />
+            <span className="text-[11px]">{fmtWhen(live.resetAt)}</span>
+          </p>
+        )}
+        {live.mode === 2 && live.endsAt > 0 && (
+          <p className="text-right text-[12px] text-mist-500">
+            <span className="text-mist-300">{closed ? "budget closed" : `ends ${fmtIn(live.endsAt, now)}`}</span>
+            <br />
+            <span className="text-[11px]">{fmtWhen(live.endsAt)}</span>
+          </p>
         )}
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-800">
-        <div className="h-full rounded-full bg-signal-500/70" style={{ width: `${Math.min(100, pct)}%` }} />
+        <div className="h-full rounded-full bg-signal-500/70" style={{ width: `${closed ? 100 : Math.min(100, pct)}%` }} />
       </div>
-      <p className="mt-2 text-[11px] text-mist-500">{formatDrops(live.spent)} of {formatDrops(live.cap)} used this window.</p>
+      <p className="mt-2 text-[11px] text-mist-500">
+        {closed
+          ? "This was a one-off budget and its end date has passed. Nothing more can be spent."
+          : live.stale
+            ? `Full allowance available — the last window ended, so the next payment starts a fresh ${live.mode === 0 ? "period" : "one"}.`
+            : live.mode === 2
+              ? `${formatDrops(live.spent)} of ${formatDrops(live.cap)} used. This budget doesn${"\u2019"}t refill.`
+              : `${formatDrops(live.spent)} of ${formatDrops(live.cap)} used this window.`}
+      </p>
     </div>
   );
 }
