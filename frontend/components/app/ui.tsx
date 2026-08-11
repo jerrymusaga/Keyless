@@ -165,6 +165,58 @@ export function Spinner({ label }: { label?: string }) {
  * way to approve the wrong payee, so both are on screen and the name never replaces the thing being
  * checked. Click it to rename.
  */
+/**
+ * A "name it" box that sits beside an address field, so an address gets its label at the moment you paste
+ * it rather than after it's saved.
+ *
+ * Naming used to be possible only on an address that already existed, which is the wrong way round — you
+ * know what an address IS while you're pasting it, and by the time it's in a list you're re-reading base58
+ * to work out which one you meant. This writes through to the same per-control-key address book, so a name
+ * typed here is the name every other panel shows.
+ *
+ * It writes only when the paired address is a valid r-address, so a half-typed one never lands in the book,
+ * and it re-applies the name if you go back and correct the address afterwards.
+ */
+export function NameThisAddress({
+  owner,
+  address,
+  valid,
+  className = "",
+}: {
+  owner: string | null;
+  address: string;
+  /** Called with the trimmed address; return true once it's worth storing a name against. */
+  valid: (a: string) => boolean;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const a = address.trim();
+
+  // Seed from the book when the field is pointed at an address that already has a name, so editing an
+  // existing recipient shows its current label instead of looking unnamed.
+  useEffect(() => {
+    if (owner && a && valid(a)) setDraft(nicknameOf(owner, a) ?? "");
+    // `valid` is a stable predicate in every call site; keying on the address is what matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, a]);
+
+  const commit = (v: string) => {
+    setDraft(v);
+    if (owner && a && valid(a)) setNickname(owner, a, v);
+  };
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => commit(e.target.value)}
+      placeholder="name it (optional)"
+      maxLength={40}
+      aria-label="Name this address"
+      className={`min-w-0 rounded-md border hairline bg-ink-950 px-2 py-1 text-[12px] text-mist-100 outline-none placeholder:text-mist-600 focus:border-signal-500/60 ${className}`}
+    />
+  );
+}
+
 export function AddressLabel({
   owner,
   address,
@@ -201,7 +253,11 @@ export function AddressLabel({
 
   if (editing) {
     return (
-      <span className="flex min-w-0 items-center gap-1.5">
+      /* The address is shown WHILE naming, in both variants, for two reasons: it's the only reveal that
+         works on touch, where there is no hover and so no tooltip; and you should be able to see the
+         address you are labelling as you label it. Editing used to hide it in both variants. */
+      <span className="flex min-w-0 flex-col gap-1">
+        <code className="min-w-0 break-all font-mono text-[11px] text-mist-500">{address}</code>
         <input
           autoFocus
           value={draft}

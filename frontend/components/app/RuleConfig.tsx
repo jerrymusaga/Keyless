@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
-import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel } from "./ui";
+import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel, NameThisAddress } from "./ui";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
 import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
@@ -19,6 +19,8 @@ function xrpToDrops(s: string): bigint {
 function assertXrpl(a: string) {
   if (!XRPL_ADDRESS_RE.test(a.trim())) throw new Error("that isn't a valid XRPL r-address");
 }
+/** The same test as a predicate, for UI that reacts to a half-typed address instead of rejecting it. */
+const isXrpl = (a: string) => XRPL_ADDRESS_RE.test(a.trim());
 
 /** Nudge the account page's "can & can't" card (a sibling component) to refetch the live config — now, and
  *  again after the explorer has had a few seconds to index the change — so the user needn't refresh. */
@@ -347,7 +349,10 @@ function ScheduledConfig({ walletId }: { walletId: `0x${string}` }) {
           return (
             <div key={i} className="hairline space-y-3 rounded-xl border bg-ink-900/40 p-3">
               <Field label="Who gets paid?">
-                <Input value={l.recipient} onChange={(e) => set(i, { recipient: e.target.value })} placeholder="rAlice…" />
+                <div className="flex gap-2">
+                  <Input value={l.recipient} onChange={(e) => set(i, { recipient: e.target.value })} placeholder="rAlice…" />
+                  <NameThisAddress owner={owner} address={l.recipient} valid={isXrpl} className="w-40 shrink-0" />
+                </div>
               </Field>
 
               {/* A fixed grid, not a wrapping row: with five controls the row broke into ragged lines and
@@ -613,6 +618,7 @@ function ExchangeConfig({ walletId }: { walletId: `0x${string}` }) {
           {rows.map((r, i) => (
             <div key={i} className="flex gap-2">
               <Input value={r.address} onChange={(e) => setRow(i, "address", e.target.value)} placeholder="rExchangeDeposit…" />
+              <NameThisAddress owner={owner} address={r.address} valid={isXrpl} className="w-32 shrink-0" />
               <input
                 value={r.tag}
                 onChange={(e) => setRow(i, "tag", e.target.value.replace(/[^0-9]/g, ""))}
@@ -899,6 +905,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
 type DurationMode = "rolling" | "calendar" | "until";
 
 function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
+  const { address: owner } = useKeyless();
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
   const [perTx, setPerTx] = useState("");
@@ -1013,6 +1020,7 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
         <Field label="Add approved recipients" hint="It can only pay these — even within the allowance. Each one needs adding before you save.">
           <div className="flex gap-2">
             <Input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="rDestination…" />
+            <NameThisAddress owner={owner} address={addr} valid={isXrpl} className="w-36 shrink-0" />
             <Button onClick={allow} disabled={busy}>Add</Button>
           </div>
         </Field>
@@ -1730,6 +1738,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Input value={payeeInput} onChange={(e) => setPayeeInput(e.target.value)} placeholder="rExchangeDeposit…" className="min-w-0 flex-1" />
+              <NameThisAddress owner={address} address={payeeInput} valid={isXrpl} className="w-36 shrink-0" />
               <Button onClick={addPayee} disabled={!!busy}>{busy === "Payee" ? "…" : "Approve"}</Button>
             </div>
             {payees.length > 0 && (
@@ -1976,7 +1985,12 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
         </Notice>
       )}
 
-      <Field label="Pay who?"><Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" /></Field>
+      <Field label="Pay who?">
+        <div className="flex gap-2">
+          <Input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="rSupplier…" />
+          <NameThisAddress owner={condOwner} address={recipient} valid={isXrpl} className="w-40 shrink-0" />
+        </div>
+      </Field>
       <Field label="Up to how much?">
         <div className="flex items-center gap-2">
           <NumberInput value={cap} onValueChange={setCap} decimal placeholder="100" className="w-28" />
@@ -2051,6 +2065,7 @@ function ConditionalConfig({ walletId }: { walletId: `0x${string}` }) {
             <>
               <span className="text-[12px] text-mist-500">then release the funds back to</span>
               <Input value={fallback} onChange={(e) => setFallback(e.target.value)} placeholder="your own r-address" className="w-56" />
+              <NameThisAddress owner={condOwner} address={fallback} valid={isXrpl} className="w-36" />
             </>
           )}
         </div>
