@@ -683,3 +683,19 @@ export function formatDrops(drops: bigint) {
     maximumFractionDigits: 6,
   })} XRP`;
 }
+
+/**
+ * Build the 32-byte `paymentReference` a payment travels with.
+ *
+ * The top 4 bytes are the XRPL destination tag, big-endian; the remaining 28 are random, so two otherwise
+ * identical payments are still distinguishable. Both ends read those 4 bytes: ExchangeRule compares them
+ * against the tag pinned to the recipient, and the enclave sets the XRPL `DestinationTag` from them
+ * (omitting it when zero). They have to be built the same way everywhere or the two disagree — which is
+ * exactly what went wrong: the spend form sent 32 random bytes, so a recipient pinned to a tag could never
+ * be paid, and every other payment carried a random destination tag onto the ledger.
+ */
+export function paymentRef(tag = 0): `0x${string}` {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  new DataView(b.buffer).setUint32(0, tag >>> 0, false); // big-endian, top 4 bytes
+  return `0x${Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("")}`;
+}

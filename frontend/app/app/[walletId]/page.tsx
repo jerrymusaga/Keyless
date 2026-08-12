@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useState, type ReactNode } from "react";
-import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
+import { BaseError, ContractFunctionRevertedError } from "viem";
 import { motion, AnimatePresence } from "motion/react";
 import { useKeyless } from "@/components/app/KeylessProvider";
 import { RuleConfig, formatLimit, type Limit } from "@/components/app/RuleConfig";
@@ -29,6 +29,7 @@ import {
   scheduleEnd,
   RULE_ABIS,
   SUPERSEDED_RULES,
+  paymentRef,
 } from "@/lib/keyless";
 
 function ruleKeyOf(rule: string): RuleKey | null {
@@ -694,6 +695,43 @@ const STRANGERS = [
 const EASE = [0.16, 1, 0.3, 1] as const;
 
 /**
+ * The destination tag this account has pinned to `recipient`, if any — and fill it in once known.
+ *
+ * An exchange only credits a deposit that carries its tag, so ExchangeRule can pin (recipient, tag) and
+ * refuse anything else. That makes the tag part of the payment, not a detail: without it a pinned
+ * recipient is unpayable. Nobody should have to remember the number, so it's looked up and filled in, and
+ * the field goes read-only because changing it can only produce a refusal.
+ */
+function usePinnedTag(enabled: boolean, walletId: `0x${string}`, recipient: string, setTag: (v: string) => void) {
+  const [pinned, setPinned] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!enabled) return;
+    let stop = false;
+    fetch("/api/rule-config", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rule: "exchange", walletId }),
+    })
+      .then((r) => r.json())
+      .then((d: { recipients?: { address: string; requireTag: boolean; tag: number }[] }) => {
+        if (stop || !d.recipients) return;
+        setPinned(Object.fromEntries(d.recipients.filter((r) => r.requireTag).map((r) => [r.address, r.tag])));
+      })
+      .catch(() => { /* the field just won't prefill */ });
+    return () => { stop = true; };
+  }, [enabled, walletId]);
+
+  const tag = pinned[recipient.trim()];
+  useEffect(() => {
+    if (tag !== undefined) setTag(String(tag));
+    // setTag is a state setter — stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tag]);
+
+  return tag;
+}
+
+/**
  * The block moment — the emotional centre of the product. "Go ahead, try to drain it" runs the account's
  * REAL rule on-chain (dryRunAuthorize: a gasless eth_call, nothing moves) and the refusal is the payoff.
  * Every refusal bumps a persistent per-account counter and offers a shareable proof. This is what makes
@@ -702,6 +740,8 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${string}` }) {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
+  const [tag, setTag] = useState("");
+  const pinnedTag = usePinnedTag(rule === RULES.exchange, walletId, to, setTag);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
   const [blocked, setBlocked] = useState(0);
@@ -711,10 +751,10 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
     try { setBlocked(Number(localStorage.getItem(`kl_blocked_${walletId}`) || 0)); } catch { /* no storage */ }
   }, [walletId]);
 
-  const run = async (recip: string, xrp: number, label: string) => {
+  const run = async (recip: string, xrp: number, label: string, destTag = 0) => {
     setBusy(true);
     setResult(null);
-    const v = await dryRunAuthorize(rule, walletId, recip, BigInt(Math.round(xrp * 1e6)));
+    const v = await dryRunAuthorize(rule, walletId, recip, BigInt(Math.round(xrp * 1e6)), destTag);
     setResult({ ok: v.allowed, reason: v.reason, label });
     if (!v.allowed) {
       setBlocked((b) => {
@@ -735,7 +775,7 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
     if (!XRPL_ADDRESS_RE.test(to.trim())) return alert("Enter a valid XRPL r-address.");
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) return alert("Enter an amount in XRP.");
-    run(to.trim(), n, `${n} XRP → ${addr(to.trim())}`);
+    run(to.trim(), n, `${n} XRP → ${addr(to.trim())}`, Number(tag.trim() || 0));
   };
 
   const share = async () => {
@@ -782,6 +822,15 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
       <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />
         <div className="flex gap-2">
+          <Input
+            value={tag}
+            onChange={(e) => setTag(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="tag"
+            inputMode="numeric"
+            readOnly={pinnedTag !== undefined}
+            title={pinnedTag !== undefined ? "This recipient is pinned to this destination tag by your policy." : "Destination tag — required by exchanges to credit your deposit."}
+            className={`w-24 ${pinnedTag !== undefined ? "text-mist-400" : ""}`}
+          />
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
           <Button variant="ghost" onClick={custom} disabled={busy}>Test</Button>
         </div>
@@ -921,6 +970,8 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
   const [spendable, setSpendable] = useState<bigint | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string; tx?: string } | null>(null);
+  const [tag, setTag] = useState("");
+  const pinnedTag = usePinnedTag(ruleKey === "exchange", walletId, to, setTag);
 
   // Hold the balance rather than checking it on submit: "you don't have that much" is only useful before
   // the click. XRPL keeps ~1 XRP as an unspendable base reserve, so it's never part of what can be sent.
@@ -958,13 +1009,16 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
       const seen = new Set<string>();
       try { (await getRecentPayments(xrpl)).forEach((t) => seen.add(t.hash)); } catch { /* transient */ }
 
-      const ref = toHex(crypto.getRandomValues(new Uint8Array(32)));
+      // The top 4 bytes are the destination tag; the enclave sets XRPL's DestinationTag from them and
+      // ExchangeRule checks them against the tag pinned to this recipient. This used to be 32 random
+      // bytes, which meant a pinned recipient could never be paid and everyone else got a random tag.
+      const ref = paymentRef(Number(tag.trim() || 0));
       await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, toClean, drops, ref], value: INIT_FEE });
 
       // On-chain authorization succeeded. The enclave now signs + submits async, so re-enable the form
       // and watch the ledger for the settled payment rather than leaving the user on "Authorized…" forever.
       setMsg({ tone: "info", text: "Authorized — the enclave is signing and submitting to XRPL. Confirming settlement…" });
-      setTo(""); setAmount("");
+      setTo(""); setAmount(""); setTag("");
       setBusy(false);
 
       const deadline = Date.now() + 90_000;
@@ -1019,6 +1073,15 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
         <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipient r-address" />
         <div className="flex gap-2">
+          <Input
+            value={tag}
+            onChange={(e) => setTag(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="tag"
+            inputMode="numeric"
+            readOnly={pinnedTag !== undefined}
+            title={pinnedTag !== undefined ? "Your policy pins this recipient to this destination tag." : "Destination tag — exchanges need it to credit your deposit. Leave blank if the recipient doesn't use one."}
+            className={`w-20 ${pinnedTag !== undefined ? "text-mist-400" : ""}`}
+          />
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
           <Button onClick={pay} disabled={busy || !xrpl || over}>{busy ? "…" : "Pay"}</Button>
         </div>

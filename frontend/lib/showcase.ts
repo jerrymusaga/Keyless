@@ -1,6 +1,6 @@
 import { encodeFunctionData, BaseError, ContractFunctionRevertedError, decodeErrorResult } from "viem";
 import { publicClient } from "./clients";
-import { ADDRESSES, RULES } from "./keyless";
+import { ADDRESSES, RULES, paymentRef } from "./keyless";
 
 // The Exchange-&-allowlist demo account below was provisioned on the standalone AllowlistRule, which is
 // now folded into ExchangeRule (allowlist == exchange with no tag/cap) and no longer a pickable template.
@@ -45,12 +45,15 @@ export async function dryRunAuthorize(
   walletId: `0x${string}`,
   recipient: string,
   amountDrops: bigint,
+  /** Destination tag to test with. Without it a tag-pinned recipient is refused for the TAG rather than
+   *  for the recipient — the right verdict for the wrong reason, which teaches the wrong lesson. */
+  tag = 0,
 ): Promise<Verdict> {
   try {
     await publicClient.call({
       account: ADDRESSES.accounts, // spoof msg.sender = KeylessAccounts to pass onlyAccounts
       to: rule,
-      data: encodeFunctionData({ abi: AUTHORIZE_ABI, functionName: "authorize", args: [walletId, recipient, amountDrops, REF] }),
+      data: encodeFunctionData({ abi: AUTHORIZE_ABI, functionName: "authorize", args: [walletId, recipient, amountDrops, tag ? paymentRef(tag) : REF] }),
     });
     return { allowed: true };
   } catch (e) {
