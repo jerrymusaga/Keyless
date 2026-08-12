@@ -31,6 +31,7 @@ import {
   SUPERSEDED_RULES,
   paymentRef,
 } from "@/lib/keyless";
+import { readLimit, fmtIn, type LimitState } from "@/lib/limit";
 
 function ruleKeyOf(rule: string): RuleKey | null {
   return (Object.keys(RULES) as RuleKey[]).find((k) => RULES[k].toLowerCase() === rule.toLowerCase()) ?? null;
@@ -740,6 +741,32 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
   const [amount, setAmount] = useState("");
   const [tag, setTag] = useState("");
   const pinnedTag = usePinnedTag(rule === RULES.exchange, walletId, to);
+
+  // "Try to drain it" sends to a STRANGER, so on an allowlist-backed spending limit it's refused for the
+  // recipient and the amount is never reached — the headline demo on a spending-limit account never
+  // actually demonstrated the spending limit. This arms a second attempt that clears the recipient gate
+  // and fails on the cap instead: an approved address, for more than the rule allows.
+  const [overspend, setOverspend] = useState<{ recipient: string; xrp: number } | null>(null);
+  useEffect(() => {
+    if (rule !== RULES.rateLimit) return;
+    let stop = false;
+    (async () => {
+      try {
+        const [cfg, lim] = await Promise.all([
+          fetch("/api/rule-config", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ rule: "rateLimit", walletId }),
+          }).then((r) => r.json()) as Promise<{ recipients?: { address: string }[] }>,
+          readLimit(walletId),
+        ]);
+        const first = cfg.recipients?.[0]?.address;
+        if (stop || !first || !lim || lim.cap === 0n) return;
+        // Comfortably past the cap, so it reads as a deliberate overspend rather than a rounding argument.
+        setOverspend({ recipient: first, xrp: Math.ceil(Number(lim.cap) / 1e6) * 3 });
+      } catch { /* the extra button just won't appear */ }
+    })();
+    return () => { stop = true; };
+  }, [rule, walletId]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
   const [blocked, setBlocked] = useState(0);
@@ -767,6 +794,11 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
   const drain = () => {
     const thief = STRANGERS[Math.floor(Math.random() * STRANGERS.length)];
     run(thief, 10000, `Drain 10,000 XRP → ${addr(thief)}`);
+  };
+
+  const tryOverspend = () => {
+    if (!overspend) return;
+    run(overspend.recipient, overspend.xrp, `${overspend.xrp} XRP → ${addr(overspend.recipient)} (approved)`);
   };
 
   const custom = () => {
@@ -815,6 +847,11 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
         <Button onClick={drain} disabled={busy}>{busy ? "Asking the rule…" : "Try to drain it →"}</Button>
+        {overspend && (
+          <Button variant="ghost" onClick={tryOverspend} disabled={busy}>
+            Try to overspend →
+          </Button>
+        )}
         <span className="text-[12px] text-mist-500">or test a specific payment</span>
       </div>
       <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -985,6 +1022,29 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
     if (pinnedTag !== undefined) setTag(String(pinnedTag));
   }, [pinnedTag]);
 
+  // On a spending limit the balance is NOT the ceiling — the policy is, and it's usually much lower. This
+  // panel printed "this account can send 95 XRP" beside the amount box on an account whose rule allowed 7,
+  // so the one number next to the button was the one that didn't apply. The allowance is shown further up
+  // the page, but by the time you've scrolled to the amount field it's gone.
+  const [limit, setLimit] = useState<LimitState | null>(null);
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (ruleKey !== "rateLimit") return;
+    let stop = false;
+    const read = () => readLimit(walletId)
+      .then((l) => { if (!stop) { setLimit(l); setNow(Math.floor(Date.now() / 1000)); } })
+      .catch(() => { /* transient — fall back to the balance ceiling */ });
+    read();
+    const poll = setInterval(read, 30_000);
+    const tick = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
+    const onChange = () => read();
+    window.addEventListener("kl:config-changed", onChange);
+    return () => {
+      stop = true; clearInterval(poll); clearInterval(tick);
+      window.removeEventListener("kl:config-changed", onChange);
+    };
+  }, [ruleKey, walletId]);
+
   // Hold the balance rather than checking it on submit: "you don't have that much" is only useful before
   // the click. XRPL keeps ~1 XRP as an unspendable base reserve, so it's never part of what can be sent.
   useEffect(() => {
@@ -997,7 +1057,11 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
   }, [xrpl]);
 
   const wanted = (() => { const n = Number(amount); return Number.isFinite(n) && n > 0 ? BigInt(Math.round(n * 1e6)) : null; })();
-  const over = wanted !== null && spendable !== null && wanted > spendable;
+  // Whichever runs out first. `policyBound` decides which explanation to give when it's exceeded — "you
+  // don't have it" and "your rule won't allow it" are different problems with different fixes.
+  const ceiling = limit !== null && (spendable === null || limit.left < spendable) ? limit.left : spendable;
+  const policyBound = limit !== null && (spendable === null || limit.left < spendable);
+  const over = wanted !== null && ceiling !== null && wanted > ceiling;
 
   const pay = async () => {
     setMsg(null);
@@ -1097,13 +1161,21 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
           <Button onClick={pay} disabled={busy || !xrpl || over}>{busy ? "…" : "Pay"}</Button>
         </div>
-        {spendable !== null && (
+        {ceiling !== null && (
           <p className={`mt-1.5 text-[11px] ${over ? "text-refuse-500" : "text-mist-500"}`}>
-            {over ? "That's more than this account can send." : <>This account can send <span className="text-mist-400">{formatDrops(spendable)}</span></>}
-            {spendable > 0n && (
-              <> · <button type="button" onClick={() => setAmount(String(Number(spendable) / 1e6))} className="underline decoration-ink-600 underline-offset-2 hover:text-signal-400">use max</button></>
+            {over
+              ? policyBound
+                ? "That's more than your rule allows right now."
+                : "That's more than this account can send."
+              : <>This account can send <span className="text-mist-400">{formatDrops(ceiling)}</span></>}
+            {ceiling > 0n && (
+              <> · <button type="button" onClick={() => setAmount(String(Number(ceiling) / 1e6))} className="underline decoration-ink-600 underline-offset-2 hover:text-signal-400">use max</button></>
             )}
-            {" · 1 XRP stays as the ledger reserve"}
+            {policyBound
+              ? limit && limit.resetAt > 0 && !(limit.mode === 0 && limit.stale)
+                ? <> · your allowance refills <span className="text-mist-400">{fmtIn(limit.resetAt, now)}</span></>
+                : " · capped by your spending limit"
+              : " · 1 XRP stays as the ledger reserve"}
           </p>
         )}
       </div>

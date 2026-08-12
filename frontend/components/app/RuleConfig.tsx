@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toHex, BaseError, ContractFunctionRevertedError } from "viem";
 import { useKeyless } from "./KeylessProvider";
 import { Button, Field, Input, NumberInput, Notice, Copy, AddressLabel, NameThisAddress } from "./ui";
+import { readLimit, fmtIn, type LimitState } from "@/lib/limit";
 import { publicClient } from "@/lib/clients";
 import { getXrplBalance } from "@/lib/xrpl";
 import { ADDRESSES, ACCOUNTS_ABI, CONDITION_TEMPLATES, EXPECTED_TRUE, FSA_READER_ABI, FIRELIGHT_VAULT_ABI, INIT_FEE, RULES, RULE_ABIS, VAULT_TYPE_NAME, XRPL_ADDRESS_RE, ZERO_ADDRESS, addr, explorerTx, formatDrops, scheduleEnd, type ConditionKey, type RuleKey } from "@/lib/keyless";
@@ -168,22 +169,6 @@ const fmtDate = (ts: number) =>
  * answer that question — and a time in UTC alone still makes the reader do arithmetic — so show theirs,
  * and say which zone it is.
  */
-/**
- * "in 4 hours 12 min" — the same instant as fmtWhen, said the way people actually think about a wait.
- *
- * Deliberately never shows seconds: the panel re-reads on a 15s tick, and a ticking seconds display that
- * only moves every 15s reads as broken. Under a minute it just says so.
- */
-const fmtIn = (ts: number, now: number) => {
-  const s = ts - now;
-  if (s <= 0) return "now";
-  if (s < 60) return "in under a minute";
-  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  if (d >= 1) return `in ${d} day${d > 1 ? "s" : ""}${h % 24 ? ` ${h % 24}h` : ""}`;
-  if (h >= 1) return `in ${h}h${m % 60 ? ` ${m % 60}m` : ""}`;
-  return `in ${m} min`;
-};
-
 const fmtWhen = (ts: number) => {
   const d = new Date(ts * 1000);
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local";
@@ -709,56 +694,14 @@ export function formatLimit(l: Limit): string {
  * turns over and how much has gone, and the UI showed neither.
  */
 function LimitStatus({ walletId }: { walletId: `0x${string}` }) {
-  const [live, setLive] = useState<
-    { cap: bigint; spent: bigint; resetAt: number; mode: number; endsAt: number; stale: boolean } | null
-  >(null);
+  const [live, setLive] = useState<LimitState | null>(null);
   // Drives the countdown. 15s is fine because fmtIn never shows seconds.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   const read = useCallback(async () => {
     try {
-      const l = (await publicClient.readContract({
-        address: RULES.rateLimit as `0x${string}`, abi: RULE_ABIS.rateLimit as never,
-        functionName: "limitOf", args: [walletId],
-      })) as readonly [boolean, number, boolean, bigint, bigint, bigint, bigint, bigint];
-      const [configured, mode, , cap, spent, , windowStart, param] = l;
-      if (!configured) return setLive(null);
-
-      const t = Math.floor(Date.now() / 1000);
-      const d = new Date();
-
-      // Mirrors RateLimitRule: rolling adds the period to the window start; calendar rolls to the next
-      // real boundary; "until a date" is a one-off budget that never refills.
-      //
-      // `stale` is the part that matters. The contract rolls the window LAZILY, inside authorize() — so
-      // once a window has elapsed with no payment, the stored `spent` still belongs to the dead window
-      // and the chain will zero it the next time the account pays. Reading it literally told the user
-      // less was available than really was, and dated the refill in the past. Treat it as full.
-      let resetAt = 0, endsAt = 0, stale = false;
-      if (mode === 0) {
-        resetAt = Number(windowStart) + Number(param);
-        stale = t >= resetAt;
-      } else if (mode === 1) {
-        const unit = Number(param); // 0 day, 1 week, 2 month
-        let start: number;
-        if (unit === 0) {
-          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000;
-          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) / 1000;
-        } else if (unit === 1) {
-          const dow = (d.getUTCDay() + 6) % 7;
-          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dow) / 1000;
-          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + (7 - dow)) / 1000;
-        } else {
-          start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000;
-          resetAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
-        }
-        stale = Number(windowStart) < start; // spend belongs to a period that has already ended
-      } else {
-        endsAt = Number(param); // one-off budget; never refills
-      }
-
-      setLive({ cap, spent: stale ? 0n : spent, resetAt, mode, endsAt, stale });
-      setNow(t);
+      setLive(await readLimit(walletId));
+      setNow(Math.floor(Date.now() / 1000));
     } catch { /* transient */ }
   }, [walletId]);
 
