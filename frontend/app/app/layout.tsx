@@ -5,7 +5,7 @@ import { AppHeader } from "@/components/app/AppHeader";
 
 export const metadata: Metadata = {
   title: "Keyless — your programmable XRP account",
-  description: "Create an XRP account that only does what you allow. No extension, no seed phrase.",
+  description: "Create an XRP account that only does what you allow. No extension, no custodian.",
 };
 
 /** Set NEXT_PUBLIC_FEEDBACK_URL in Vercel to a Tally / Google Form URL to show the feedback link. */

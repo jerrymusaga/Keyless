@@ -70,7 +70,7 @@ export function Hero() {
             </a>
           </motion.div>
           <motion.p className="mt-6 font-mono text-xs text-mist-500" {...rise(0.3)}>
-            No extension. No seed phrase. Built on Flare + the XRP Ledger.
+            No extension. No custodian. Built on Flare + the XRP Ledger.
           </motion.p>
         </div>
 

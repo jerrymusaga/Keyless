@@ -93,8 +93,8 @@ export default function AppHome() {
           <Button onClick={create}>Create my Keyless wallet →</Button>
         </div>
         <p className="mt-4 text-xs text-mist-500">
-          No extension, no seed phrase. Export your control key anytime to back it up. The XRP keys never leave the
-          enclave — that&rsquo;s what keeps accounts undrainable.
+          No extension, no custodian. You&rsquo;ll get twelve words to write down first — they change your rules,
+          never your money. The XRP keys never leave the enclave — that&rsquo;s what keeps accounts undrainable.
         </p>
       </div>
     );
