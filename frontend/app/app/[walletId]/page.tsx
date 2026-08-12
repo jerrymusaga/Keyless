@@ -699,10 +699,15 @@ const EASE = [0.16, 1, 0.3, 1] as const;
  *
  * An exchange only credits a deposit that carries its tag, so ExchangeRule can pin (recipient, tag) and
  * refuse anything else. That makes the tag part of the payment, not a detail: without it a pinned
- * recipient is unpayable. Nobody should have to remember the number, so it's looked up and filled in, and
- * the field goes read-only because changing it can only produce a refusal.
+ * recipient is unpayable.
+ *
+ * Reporting it is all this does. The spend form fills it in and locks it, because there nobody should have
+ * to remember the number and changing it could only produce a refusal. Try-to-break-it deliberately does
+ * NOT fill it in — that panel must test what you actually typed, or it could answer "allowed" for an input
+ * you never gave it. It shows the pinned value as a hint instead, so trying the right tag stays one glance
+ * away without being done for you.
  */
-function usePinnedTag(enabled: boolean, walletId: `0x${string}`, recipient: string, setTag: (v: string) => void) {
+function usePinnedTag(enabled: boolean, walletId: `0x${string}`, recipient: string) {
   const [pinned, setPinned] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -721,14 +726,7 @@ function usePinnedTag(enabled: boolean, walletId: `0x${string}`, recipient: stri
     return () => { stop = true; };
   }, [enabled, walletId]);
 
-  const tag = pinned[recipient.trim()];
-  useEffect(() => {
-    if (tag !== undefined) setTag(String(tag));
-    // setTag is a state setter — stable across renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tag]);
-
-  return tag;
+  return pinned[recipient.trim()];
 }
 
 /**
@@ -741,7 +739,7 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [tag, setTag] = useState("");
-  const pinnedTag = usePinnedTag(rule === RULES.exchange, walletId, to, setTag);
+  const pinnedTag = usePinnedTag(rule === RULES.exchange, walletId, to);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; reason?: string; label: string } | null>(null);
   const [blocked, setBlocked] = useState(0);
@@ -837,6 +835,15 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
           <Button variant="ghost" onClick={custom} disabled={busy}>Test</Button>
         </div>
       </div>
+      {pinnedTag !== undefined && (
+        /* Told, not filled in. An exchange deposit address is shared by every customer of that exchange —
+           the tag is which account. So "right address, someone else's tag" is a real attack, and seeing it
+           refused is the point of this panel. */
+        <p className="mt-2 text-[11px] text-mist-500">
+          Your policy pins this recipient to tag <span className="font-mono text-mist-400">{pinnedTag}</span>.
+          Send it with any other tag — or none — and it&rsquo;s refused.
+        </p>
+      )}
 
       <div className="mt-4 min-h-[68px]">
         <AnimatePresence mode="wait">
@@ -973,7 +980,10 @@ function SpendPanel({ walletId, xrpl, ruleKey }: { walletId: `0x${string}`; xrpl
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error" | "info"; text: string; tx?: string } | null>(null);
   const [tag, setTag] = useState("");
-  const pinnedTag = usePinnedTag(ruleKey === "exchange", walletId, to, setTag);
+  const pinnedTag = usePinnedTag(ruleKey === "exchange", walletId, to);
+  useEffect(() => {
+    if (pinnedTag !== undefined) setTag(String(pinnedTag));
+  }, [pinnedTag]);
 
   // Hold the balance rather than checking it on submit: "you don't have that much" is only useful before
   // the click. XRPL keeps ~1 XRP as an unspendable base reserve, so it's never part of what can be sent.
