@@ -827,9 +827,11 @@ function BreakItPanel({ walletId, rule }: { walletId: `0x${string}`; rule: `0x${
             onChange={(e) => setTag(e.target.value.replace(/[^0-9]/g, ""))}
             placeholder="tag"
             inputMode="numeric"
-            readOnly={pinnedTag !== undefined}
-            title={pinnedTag !== undefined ? "This recipient is pinned to this destination tag by your policy." : "Destination tag — required by exchanges to credit your deposit."}
-            className={`w-24 ${pinnedTag !== undefined ? "text-mist-400" : ""}`}
+            /* Prefilled from the policy but deliberately EDITABLE here, unlike the spend form: this panel
+               exists to try what shouldn't work, and "same exchange, someone else's tag" is one of the
+               attacks the pinning actually stops. Locking it would hide the thing worth showing. */
+            title={pinnedTag !== undefined ? `Your policy pins this recipient to tag ${pinnedTag}. Change it and see what happens.` : "Destination tag, if the recipient uses one."}
+            className="w-24"
           />
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="XRP" inputMode="decimal" className="w-28" />
           <Button variant="ghost" onClick={custom} disabled={busy}>Test</Button>
