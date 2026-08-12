@@ -29,6 +29,17 @@ export type LimitState = {
    * less is available than really is, so treat it as full.
    */
   stale: boolean;
+  /**
+   * False means NOTHING pins where this account's money can go.
+   *
+   * `pay()` has no caller check by design — the rule is the gate, not the caller — and a walletId is
+   * public in the WalletCreated event. So an allowance with no recipient list is collectable by a
+   * stranger, every window. The app no longer offers that setting; this reports accounts saved under it
+   * so their owners can close it. See SECURITY_NOTES.md.
+   */
+  allowlistOnly: boolean;
+  /** Drops; 0 = no per-payment cap. */
+  maxPerTx: bigint;
 };
 
 export async function readLimit(walletId: `0x${string}`): Promise<LimitState | null> {
@@ -39,7 +50,7 @@ export async function readLimit(walletId: `0x${string}`): Promise<LimitState | n
     args: [walletId],
   })) as readonly [boolean, number, boolean, bigint, bigint, bigint, bigint, bigint];
 
-  const [configured, mode, , cap, spent, , windowStart, param] = l;
+  const [configured, mode, allowlistOnly, cap, spent, maxPerTx, windowStart, param] = l;
   if (!configured) return null;
 
   const t = Math.floor(Date.now() / 1000);
@@ -79,6 +90,8 @@ export async function readLimit(walletId: `0x${string}`): Promise<LimitState | n
     mode,
     endsAt,
     stale,
+    allowlistOnly,
+    maxPerTx,
   };
 }
 

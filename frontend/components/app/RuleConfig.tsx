@@ -836,7 +836,7 @@ function SavedRecipients({ ruleKey, walletId, refreshKey }: { ruleKey: RuleKey; 
             Allowance: <span className="text-mist-300">{formatLimit(data.limit)}</span>
             <UsdHint drops={BigInt(data.limit.cap)} usd={usd} />
             {data.limit.maxPerTx !== "0" && <> · max <span className="text-mist-300">{formatDrops(BigInt(data.limit.maxPerTx))}</span>/payment</>}
-            {" · "}<span className="text-mist-300">{data.limit.allowlistOnly ? "approved recipients only" : "any recipient"}</span>
+            {" · "}<span className={data.limit.allowlistOnly ? "text-mist-300" : "text-refuse-500"}>{data.limit.allowlistOnly ? "approved recipients only" : "any recipient — open to anyone"}</span>
           </p>
         )}
         {err && <p className="text-[12px] text-refuse-500">{err}</p>}
@@ -852,13 +852,25 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
   const [addr, setAddr] = useState("");
   const [cap, setCap] = useState("");
   const [perTx, setPerTx] = useState("");
-  const [allowlistOnly, setAllowlistOnly] = useState(true);
+  // Always true now — an allowance with no recipient list is payable by anyone. Kept as a named constant
+  // rather than inlining `true` at the call site so the configure() argument still reads for itself.
+  const allowlistOnly = true;
   const [mode, setMode] = useState<DurationMode>("rolling");
   const [count, setCount] = useState("1"); // rolling
   const [unit, setUnit] = useState("days"); // rolling
   const [calUnit, setCalUnit] = useState("month"); // calendar: day|week|month
   const [until, setUntil] = useState(""); // until: yyyy-mm-dd
   const [refreshKey, setRefreshKey] = useState(0);
+  // What the CHAIN currently says, which for accounts saved before this can be false.
+  const [savedOpen, setSavedOpen] = useState(false);
+  useEffect(() => {
+    let stop = false;
+    readLimit(walletId)
+      .then((l) => { if (!stop && l) setSavedOpen(!l.allowlistOnly); })
+      .catch(() => { /* the warning just won't show */ });
+    return () => { stop = true; };
+  }, [walletId, refreshKey]);
+
   const { busy, msg, run } = useConfigAction();
 
   const allow = async () => {
@@ -940,24 +952,17 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
           every payee, and that adding an address needs its own button. */}
       <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-mist-500">Approved recipients</p>
 
-      {/* The choice first, then what it produced. Reading the list before the setting that governs it is
-          backwards — you can't judge the list until you know whether it's being consulted. */}
-      <Field label="Who can it pay?" hint="A named list, or anyone — either way it&rsquo;s capped by the allowance below.">
-        <div className="flex gap-2">
-          {([[true, "Approved recipients only"], [false, "Anyone"]] as const).map(([val, label]) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setAllowlistOnly(val)}
-              className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
-                allowlistOnly === val ? "border-signal-500/60 bg-signal-500/5 text-mist-100" : "hairline bg-ink-900/60 text-mist-400 hover:text-mist-200"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </Field>
+      {/* There used to be an "Anyone" option here. It could not be offered safely.
+          `pay()` has no caller check — that's the design, the rule is the gate, not the caller — and a
+          walletId is public in the WalletCreated event. So a limit with no recipient list pays its whole
+          allowance to whoever asks first, every window, forever. The cap didn't bound the loss; it just
+          set the drip rate. Every other rule pins the destination, which is what makes a permissionless
+          pay() safe; this was the one that didn't. See SECURITY_NOTES.md. */}
+      <Notice tone="info">
+        <span className="font-medium">This account can only pay addresses you list.</span> The allowance
+        limits how much, not where — and &ldquo;where&rdquo; is what actually protects you, because anyone
+        can ask this account to pay. The rule is what refuses them.
+      </Notice>
 
       {allowlistOnly && (
         <Field label="Add approved recipients" hint="It can only pay these — even within the allowance. Each one needs adding before you save.">
@@ -971,12 +976,14 @@ function RateLimitConfig({ walletId }: { walletId: `0x${string}` }) {
 
       {allowlistOnly && <SavedRecipients ruleKey="rateLimit" walletId={walletId} refreshKey={refreshKey} />}
 
-      {/* Switching to "Anyone" leaves the approved list on screen, which read as still-in-force. It isn't:
-          the saved rule stops consulting it. Say so where the confusion happens. */}
-      {!allowlistOnly && (
-        <Notice tone="warn">
-          <span className="font-medium">Anyone means anyone.</span> Any approved recipients above stay
-          listed but stop mattering — saving this lets the account pay any address, up to the allowance.
+      {/* Saved under the old "Anyone" setting, and still live on-chain. The owner is the only one who can
+          fix it, so the app has to tell them plainly rather than quietly stop offering the option. */}
+      {savedOpen && (
+        <Notice tone="error">
+          <span className="font-medium">This account can currently pay anyone.</span> It was saved with no
+          recipient list, and because anyone can ask a Keyless account to pay, its allowance can be
+          collected by a stranger — repeatedly, each window. Add the addresses it should be able to pay
+          below and save; that closes it immediately. If you&rsquo;d rather not, move the XRP out first.
         </Notice>
       )}
 

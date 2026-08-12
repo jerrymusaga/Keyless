@@ -6,6 +6,58 @@ matter, so a future reader can re-check it in minutes rather than rediscover it.
 
 ---
 
+## 0. A spending limit with no recipient list was payable by anyone — FIXED
+
+**Status:** was live and exploitable · **Severity:** high (whole balance, at the cap's drip rate)
+**Found:** 2026-08-12, from a question about what you actually hand an agent.
+
+### The invariant
+
+`KeylessAccounts.pay()` deliberately has **no caller check**. That is the architecture: the rule is the
+gate, not the caller, which is what lets you hand an agent an account ID and nothing else. It is only safe
+because of an unstated invariant:
+
+> **Every rule must pin where the money can go, because nothing pins who can ask.**
+
+A `walletId` is not a secret — it is emitted in `WalletCreated`, indexed by owner.
+
+### Where it broke
+
+`RateLimitRule` could be configured with `allowlistOnly = false` — "Anyone", offered in the UI beside
+"Approved recipients only". That configuration pins nothing:
+
+```solidity
+if (l.allowlistOnly && !allowed[walletId][keccak256(bytes(recipient))]) revert Rejected("recipient not allowed");
+```
+
+With it false, any address on earth could call `pay(walletId, theirOwnAddress, cap, ref)` and take the
+entire allowance, every window, indefinitely. The cap did not bound the loss — it only set the drip rate.
+Cost to the attacker: gas plus the instruction fee.
+
+Two live accounts were in this state when it was found — one holding 93 XRP against a 100 XRP cap, i.e.
+drainable in a single call by a stranger. Neither was locked, so both remained fixable by their owners.
+
+### Every other rule was fine
+
+Exchange and Allowlist gate the recipient unconditionally; Scheduled pins payee **and** exact amount per
+line; Conditional pins the payee or the fallback; the FXRP rules pin approved payees and your own Smart
+Account. This was the only rule that let the destination go unconstrained.
+
+### The fix
+
+The option is gone. `allowlistOnly` is now a constant `true` in the config UI, and accounts already saved
+with it false get a red notice telling them to add recipients and re-save (or move the XRP out). No
+contract change: `RateLimitRule` still accepts the flag, so existing accounts keep working and nothing
+needed redeploying or migrating.
+
+### What would make it matter again
+
+- Any **new rule** that doesn't constrain the recipient. That's the invariant to check in review — a rule
+  is a security boundary, and "who may receive" is the half that `pay()` doesn't do for you.
+- Re-exposing the flag. If the agent-pays-arbitrary-counterparties use case is ever wanted, it needs
+  `authorize()` to receive the original caller so a rule can gate on it — which means changing
+  `IKeylessRule` and `KeylessAccounts`, not just the rule.
+
 ## 1. Keyless emits an XRPL destination tag on FXRP mints, which FSA's source says it shouldn't
 
 **Status:** not exploitable today · **Severity if it became reachable:** critical (every FXRP mint stolen)
