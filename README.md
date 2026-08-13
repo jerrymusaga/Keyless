@@ -228,6 +228,45 @@ manager diamond rather than trusting a hardcoded address here.
 
 ---
 
+## Verify it yourself
+
+Nothing here needs to be taken on trust. Every claim above resolves to a call anyone can make.
+
+```bash
+RPC=https://coston2-api.flare.network/ext/C/rpc
+KA=0x57eb332D7000752ee82a35cc1A75941F0a619979
+DIAMOND=0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE
+
+# 1. This contract really is the extension's sole commander.
+cast call $KA "extensionId()(uint256)" --rpc-url $RPC          # 65645
+cast call $KA "isBound()(bool)"        --rpc-url $RPC          # true
+cast call $DIAMOND "getTeeExtensionInstructionsSender(uint256)(address)" 65645 --rpc-url $RPC   # == $KA
+
+# 2. The XRPL address really was reported by the enclave, not written by us.
+cast call $KA "xrplAddressOf(bytes32)(string)" <walletId> --rpc-url $RPC
+
+# 3. The rule really does refuse. Read-only, no gas, nothing moves —
+#    spoof the caller as KeylessAccounts to pass the rule's onlyAccounts gate.
+cast call 0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4 \
+  "authorize(bytes32,string,uint256,bytes32)" \
+  <walletId> "rSomeAddressNotOnTheList" 1000000 0x00 \
+  --from $KA --rpc-url $RPC                                    # reverts: "recipient not allowed"
+```
+
+The same refusal is one click in the app — every account page has a **Try to break it** panel that runs
+exactly this call against the real deployed rule.
+
+**The traction numbers** in this README come from replaying `KeylessAccounts` events (`WalletCreated`,
+`PaymentAuthorized`, `RuleSet`, `RuleLocked`, `XrplAddressReported`) from block 0 via the Coston2 explorer
+API — no off-chain database is involved, so anyone can recount them.
+
+**The enclave is in this repo.** `enclave/go/internal/extension` is the security core: `processInit`
+generates the key from enclave entropy and there is **no code path that imports or exports a private key**.
+The build is reproducible and the image's code hash is what a machine must attest to before it can join
+extension 65645 — see [`enclave/REPRODUCIBILITY.md`](enclave/REPRODUCIBILITY.md).
+
+---
+
 ## Repository layout
 
 ```

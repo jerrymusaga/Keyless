@@ -18,10 +18,11 @@ flowchart TD
 
     subgraph Coston2["Flare / Coston2 — the policy engine"]
         KA["KeylessAccounts<br/>multi-tenant keyring manager<br/>· createWallet · setRule · pay · lockRule<br/>· sole instructionsSender for ext 65645"]
-        RULES["Rule modules (IKeylessRule.authorize)<br/>Allowlist · RateLimit · Subscription · FdcEscrow<br/>each lockable via KeylessRuleBase"]
+        RULES["Rule modules (IKeylessRule.authorize)<br/>Exchange · Spending limit · Scheduled<br/>Conditional · FXRP<br/>each lockable via KeylessRuleBase"]
         REG["Flare TEE registry (EIP-2535 diamond)<br/>ext 65645 · code hash · governance signer-set<br/>getRandomTeeIds · sendInstructions"]
         SV["KeylessStateVerifier<br/>verify attested state → reportXrplAddress"]
-        FDC["FDC verification<br/>(FdcEscrowRule reads it)"]
+        FDC["Flare Data Connector<br/>(ConditionalRule verifies proofs against a pinned request)"]
+        FSA["Flare Smart Accounts + FAssets<br/>(FxrpRule: mint · vaults · redeem home)"]
     end
 
     subgraph FCC["Flare Confidential Compute — the enclave"]
@@ -38,13 +39,16 @@ flowchart TD
     KA -->|getRandomTeeIds + sendInstructions KEYLESS_XRP| REG
     REG --> PROXY --> ENC
     ENC -->|signs allowed payment| LEDGER
+    LEDGER -.tagged mint · FSA memo instructions.-> FSA
     ENC -->|attested state walletId→r-address| PROXY --> SV --> KA
 ```
 
 **Layer responsibilities**
 - **Coston2** decides *what may be signed* (policy) and *who may command the enclave* (the registry pins the code hash + governance + instructionsSender).
 - **FCC enclave** *does the signing* — one XRPL key per wallet, generated from enclave entropy, never exported. Only the address ever leaves.
-- **XRPL** *settles*. The FDC-escrow rule adds Flare's Data Connector as a condition source.
+- **XRPL** *settles*. Two more Flare surfaces hang off it: the **Data Connector**, which `ConditionalRule`
+  uses to turn a real-world fact into on-chain truth, and **FAssets + Smart Accounts**, which `FxrpRule` uses
+  to move XRP to Flare, earn, and bring it home.
 
 ---
 
@@ -115,10 +119,21 @@ The critical property: the rule check happens **on-chain, before** the instructi
 
 - **`KeylessAccounts.sol`** — the multi-tenant keyring manager and the extension's sole `instructionsSender`. `createWallet` (sends INIT), `setRule`, `pay` (runs the rule then sends XRPSEND), `lockRule`, `xrplAddressOf`. Discovers its extension id via `setExtensionId()` (loops `FIRST_PUBLIC_EXTENSION_ID … nextPublicExtensionId()`).
 - **`rules/KeylessRuleBase.sol`** — shared scaffolding: `onlyAccounts`, lockable config (`isLocked`).
-- **`rules/AllowlistRule.sol`** — pay only allowlisted recipients.
-- **`rules/RateLimitRule.sol`** — allowlist + a per-window spend cap.
-- **`rules/SubscriptionRule.sol`** — one merchant may pull ≤ X per period.
-- **`rules/FdcEscrowRule.sol`** — pay only after Flare's FDC attests a condition.
+- **`rules/ExchangeRule.sol`** — approved recipients, each optionally pinned to an exact XRPL destination
+  tag (the tag rides in the top 4 bytes of `paymentReference`), plus an optional per-payment cap. Pinning
+  `(recipient, tag)` as a pair means a stolen control key can't send to the same exchange under someone
+  else's tag.
+- **`rules/RateLimitRule.sol`** — approved recipients + a cap per rolling window, calendar period, or
+  one-off budget. The window rolls **lazily**, inside `authorize`.
+- **`rules/ScheduledRule.sol`** — fixed payee, fixed amount, fixed calendar slot, capped number of runs.
+  Missed runs are skipped, never accrued, so an idle account can't wake up owing a backlog.
+- **`rules/ConditionalRule.sol`** — pays only once Flare's Data Connector attests a fact. Pins the **whole**
+  Web2Json request (url, query, jq, ABI signature), so a proof of a different API returning the same value
+  can't release it. Refuses every recipient — payee *and* fallback — until proven.
+- **`rules/FxrpRule.sol`** — mint XRP→FXRP into a Smart Account **computed on-chain from the walletId**,
+  a closed allowlist of vault instruction ids, redeem home, and cash out only to approved payees.
+- Superseded and kept deployed so older accounts keep working: `AllowlistRule`, `SubscriptionRule`,
+  `FxrpMintRule`, `FxrpDefiRule`.
 - **`KeylessStateVerifier.sol`** — receives the enclave's attested INIT state and writes `xrplAddressOf` **only if the TEE attested to it** (in progress; replaces a trusted relayer).
 
 ## The enclave (`enclave/`)
