@@ -228,6 +228,24 @@ manager diamond rather than trusting a hardcoded address here.
 
 ---
 
+## Threat model
+
+| Adversary holds… | Can they drain the account? |
+| --- | --- |
+| The browser **control key** | No (if the rule is **locked**). They can only call `pay` to policy-approved recipients; `lockRule` freezes the rule pointer + config so they can't repoint to a permissive rule. On an **unlocked** account a stolen control key *can* `setRule`→`pay`, so lock before funding. |
+| The **app / frontend** | No. It can only ask for payments; the rule and the enclave gate them. |
+| The **machine operator** (runs the enclave) | No. The key is generated in-TEE and never exported; the enclave only obeys `getTeeExtensionInstructionsSender(65645)` = KeylessAccounts. |
+| Someone who **swaps the enclave image** | No. A machine only joins ext 65645 by attesting to the registered code hash under the registered governance. A different image ≠ the registered hash. |
+| A **quantum** attacker | Out of scope. They'd derive the key from its public key and sign on XRPL directly, bypassing Flare. Keyless enforces policy, not post-quantum key secrecy. |
+
+---
+
+The row that matters: **an unlocked account is only as safe as the control key**, because that key can
+`setRule`. Locking is the one-way step that closes it — which is why the app pushes you toward it and why
+3 accounts on Coston2 are already locked forever.
+
+---
+
 ## Verify it yourself
 
 Nothing here needs to be taken on trust. Every claim above resolves to a call anyone can make.
@@ -295,8 +313,7 @@ keyless/
 └── *.md                              ARCHITECTURE · FCC_TRACK2 · SECURITY_NOTES · POSITIONING · …
 ```
 
-Deeper docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) (components, sequences, threat model) ·
-[`FCC_TRACK2.md`](FCC_TRACK2.md) (Confidential Compute deep-dive) ·
+Deeper docs: [`FCC_TRACK2.md`](FCC_TRACK2.md) (Confidential Compute deep-dive) ·
 [`SECURITY_NOTES.md`](SECURITY_NOTES.md) (findings and the invariants they taught) ·
 [`USER_FLOWS.md`](USER_FLOWS.md) · [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md) ·
 [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md)
