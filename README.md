@@ -343,6 +343,33 @@ See [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md) for the full go-live sequence and i
 
 ---
 
+## What the Flare community changed
+
+**26 distinct owners** have created accounts on Coston2, and several of them fed back while it was being
+built — one in unusual depth, working through every policy end to end and writing up what broke. Their
+feedback did more than polish the UI; twice it changed how the product handles keys.
+
+| What they hit | What changed |
+|---|---|
+| Couldn't see their accounts after switching browser | Accounts are now recovered **from chain** (`WalletCreated` events), not from local storage — so the account list never depends on the device it was made on |
+| A 64-character hex key was *"difficult to write down — get this wrong & your assets are gone"* | The control key became a **12-word phrase**, with a backup screen that **blocks account creation** until it's confirmed written down, and no copy button |
+| Ended up with accounts and no backup, because backup was *offered* beside account creation rather than required | The backup gate now comes first — the option existed, it just never insisted |
+| Several addresses across policies *"without recognisable names make it very confusing which wallet you're sending XRP to"* | Click-to-name on **every** address, in every policy, shared across accounts under one control key |
+| Scheduled a payment "for today", nothing had run by 07:50 UTC, and couldn't tell a wait from a failure | Every time is shown in the reader's **own timezone, named** — calendar boundaries are 00:00 UTC, and a date alone can't answer "is this late or is this waiting?" |
+| *"Not having to manually note the time would be helpful"* — no way to know when a spending limit refills | The allowance now shows what's left **and counts down** to the refill |
+| Read the approved-recipients list and the spending cap as one setting | Two labelled groups, so it's clear the allowance applies to **every** payee |
+| Read the payout panel as a second "try to break it" | It's hidden until the rule says a payment is possible, and the account explains why it's absent |
+
+The pattern worth naming: **every localStorage convenience turned out to be a recovery question in
+disguise.** That lesson came from a user, not from us, and it's why the account list moved on-chain while
+nicknames deliberately stayed local — losing a nickname costs you a label, losing your account list looked
+like losing money.
+
+Feedback from the Flare dev team shaped the architecture too: the answer to "what happens when a TEE
+restarts?" is what made threshold key backup the top of the roadmap rather than a footnote.
+
+---
+
 ## Roadmap
 
 A new capability is **one new rule contract**. The key, the enclave and the account never change — which is
