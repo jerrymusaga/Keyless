@@ -181,13 +181,15 @@ export default function AccountDashboard({ params }: { params: Promise<{ walletI
           </Card>
           <div id="break-it"><BreakItPanel walletId={wid} rule={rule} /></div>
           <ProofPanel rule={rule} xrpl={xrpl} />
-          {/* FXRP has its own mint / earn / bring-home actions, and the rule blocks all other payments —
-              so a generic "Spend to an r-address" would only ever be refused. Hide it for FXRP. */}
+          {/* This used to be hidden for FXRP, on the reasoning that the rule blocked every payment except
+              mint and vault traffic — true when it was written, and false since `allowedPayee` landed. The
+              effect was that an FXRP account could approve a cash-out address and then had no way on earth
+              to pay it: the rule allowed it, the approval UI existed, and nothing could send. */}
           {/* On Conditional and Scheduled, this panel can't do anything until the rule says so — and a
               tester read it beside "Try to break it" as a second way to do the same thing. It isn't: it's
               how a proven condition actually pays out. So rather than delete the payout, hide it until it
               means something, and let the account say why it's absent. */}
-          {rk !== "fxrp" && (spendReady === null ? null : spendReady ? (
+          {(spendReady === null ? null : spendReady ? (
             <SpendPanel walletId={wid} xrpl={xrpl} ruleKey={rk} />
           ) : (
             <Card>
@@ -1002,6 +1004,10 @@ const SPEND_COPY: Partial<Record<RuleKey, { title: string; blurb: string }>> = {
   escrow: {
     title: "Release the payment",
     blurb: "Once the condition is proven, this is how the payee is paid. Before then the rule refuses it — including to you.",
+  },
+  fxrp: {
+    title: "Cash out",
+    blurb: "Sends XRP to an address you approved in step ④ — and nowhere else. Bring FXRP home first; this spends the XRP that lands back on the ledger.",
   },
   scheduled: {
     title: "Run a payment now",
