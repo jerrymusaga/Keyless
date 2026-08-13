@@ -326,6 +326,47 @@ See [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md) for the full go-live sequence and i
 
 ---
 
+## Roadmap
+
+A new capability is **one new rule contract**. The key, the enclave and the account never change — which is
+why this list is a consequence of the architecture rather than a wishlist.
+
+### Shipped during the hackathon
+- **Conditional payments** — payouts gated on a Data Connector-attested fact, with the whole request pinned
+- **The FXRP round trip** — mint, vault, redeem home, cash out to approved payees
+- **Scheduled payments** — payee, amount and calendar slot fixed; missed runs skipped rather than accrued
+- **Destination-tag pinning** — a recipient bound to *(address, tag)*, so the right exchange under the wrong
+  tag is refused
+
+### Next — closing what's honestly open
+1. **Threshold key backup (`walletkeymanager`).** The one thing between this and a wallet people should
+   trust with real money: secret-share the signing key across ⅔ of Flare's data providers plus the owner's
+   key admins, so a dead machine doesn't mean dead funds. **The primary post-hackathon milestone.**
+2. **Hardware attestation (`MODE=0`).** Move off the simulated enclave onto real Confidential Space, so the
+   code hash is attested by hardware rather than fixed by configuration.
+3. **Finish `KeylessStateVerifier`.** The enclave already emits signed, code-hash-bound state; the contract
+   that verifies it on-chain and writes `xrplAddressOf` is the last hop of the trust chain.
+
+### Then — things native XRP structurally cannot do
+- **Caller-aware rules.** `authorize()` doesn't currently see who called `pay()`. Passing the caller through
+  would let a rule say "only *this* agent may ask", which is what an agent paying unpredictable
+  counterparties would need.
+- **Cross-currency payouts.** XRPL settles cross-currency payments natively (`SendMax` in XRP, `Amount` as an
+  issued currency). Teaching the instruction and the enclave to build one would let a policy hold a rule
+  like "convert to RLUSD and pay, and nothing else."
+- **Yield without wrapping.** Native XRPL AMM positions under policy, and an enclave-held Flare staking key
+  that can stake but can never withdraw elsewhere — see [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md).
+- **DAO-controlled XRP.** A DAO on Flare votes; native XRP moves on XRPL. No bridge, no wrapped asset, no
+  multisig ceremony.
+
+### Not on the roadmap, deliberately
+- **Privacy.** The enclave buys key custody and code integrity. The rules are public *on purpose* — an
+  unreadable policy is not a safety guarantee.
+- **Post-quantum key secrecy.** Keyless enforces policy. Anyone who could derive the key from its public key
+  would sign on XRPL directly and never touch Flare.
+
+---
+
 ## Status and honesty
 
 - **Simulated TEE mode (`MODE=1`) today** — a fixed code hash, not hardware attestation. The architecture is

@@ -74,7 +74,9 @@ machine **0xD47F3c4E…dD646** (production, governance-attested, code hash `0x19
 
 ## What to point a judge at
 - `getTeeExtensionInstructionsSender(65645)` → KeylessAccounts `0x57eb332D…` (the enclave obeys the contract).
-- `getRandomTeeIds(65645, 1)` → the attested production machine `0xD47F3c4E…`.
+- `getRandomTeeIds(65645, 1)` → the attested production machine currently serving the extension. (Don't
+  expect a fixed address — the simulated enclave gets a new identity on every restart, which is exactly the
+  limitation the mainnet threshold-backup path removes.)
 - The live XRPL tx above (real XRP moved, deny path reverted on-chain).
 - `src/KeylessAccounts.sol` (the keyring manager), `src/rules/*` (the policies), `src/KeylessStateVerifier.sol`
   (verified-on-chain, in progress), and the enclave (`enclave/`, forked from `fce-sign`, keys generated

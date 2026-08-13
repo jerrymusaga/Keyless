@@ -47,14 +47,15 @@ forge script script/Deploy.s.sol:DeployKeyless \
   --rpc-url coston2 --broadcast --private-key "$PK"
 ```
 
-Copy the printed addresses — you'll need all six:
+Copy the printed addresses — you'll need all of them:
 
 ```
 KeylessAccounts  : 0x...
-AllowlistRule    : 0x...
+ExchangeRule     : 0x...
 RateLimitRule    : 0x...
-SubscriptionRule : 0x...
-FdcEscrowRule    : 0x...
+ScheduledRule    : 0x...
+ConditionalRule  : 0x...
+FxrpRule         : 0x...
 Enclave reporter : 0x...   (sanity-check this matches your reporter key's address)
 ```
 
@@ -84,12 +85,12 @@ the bind didn't take.
 ## 3. Verify on-chain (30 seconds)
 
 ```bash
-cast call 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F \
-  "getTeeExtensionInstructionsSender(uint256)(address)" 454 --rpc-url coston2
+cast call 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE \
+  "getTeeExtensionInstructionsSender(uint256)(address)" 65645 --rpc-url coston2
 # -> must equal your new KeylessAccounts
 
-cast call 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F \
-  "getActiveTeeMachines(uint256)(address[])" 454 --rpc-url coston2
+cast call 0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE \
+  "getActiveTeeMachines(uint256)(address[])" 65645 --rpc-url coston2
 # -> must be non-empty (the same machine as before; it did not need re-registering)
 ```
 
@@ -100,8 +101,8 @@ cast call 0x004224fa1BF1Acd3D233f011FB03b8dd5fA5d41F \
 Edit `frontend/lib/keyless.ts`:
 
 - `ADDRESSES.accounts` → new KeylessAccounts (step 1)
-- `RULES.allowlist / rateLimit / subscription` → the new rule addresses
-- `RULES.escrow` → the new **FdcEscrowRule** address (this flips escrow from "soon" to selectable)
+- `RULES.exchange / rateLimit / scheduled / escrow / fxrp` → the new rule addresses
+  (`escrow` is the key for **ConditionalRule**)
 
 > The legacy `ADDRESSES.policy` can stay — the landing page's "refuse" demo still runs against it.
 
@@ -143,7 +144,7 @@ still runs — it just shows the funding fallback and "provisioning…" states.
 ## Notes / rollback
 
 - **No enclave change, no re-attestation.** The machine attested a code hash we didn't touch; it keeps
-  serving extension 454 across the rebind.
+  serving extension 65645 across the rebind.
 - **`reportXrplAddress` is idempotent** — the relayer can be called repeatedly; the first address for a
   wallet wins and can't be repointed.
 - **Rollback** is one command: re-run `BindPolicy` with `KEYLESS_ACCOUNTS` set back to the old
