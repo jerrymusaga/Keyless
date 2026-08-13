@@ -1543,6 +1543,18 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             </p>
           </div>
 
+          {/* Said HERE, before step ①, because step ④ is where it would otherwise be discovered — after the
+              money is already in. Approving an exit address isn't a formality: without one this account can
+              cycle XRP and FXRP forever and never let anything out. Better to learn the shape of the round
+              trip before minting than to find the last door locked at the end of it. */}
+          {payees.length === 0 && (
+            <Notice tone="info">
+              <span className="font-medium">Decide where it&rsquo;s allowed to cash out.</span> Until you
+              approve an address in step ④, this account can mint, earn and bring XRP home — but nothing can
+              leave it. You can do it now or later; nothing can be cashed out until you do.
+            </Notice>
+          )}
+
           {/* ① Mint */}
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">① Mint FXRP</p>
@@ -1678,6 +1690,28 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             </div>
           )}
 
+          {/* ③ Bring home */}
+          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
+            <p className="text-[14px] font-medium text-mist-100">③ 🏠 Bring home to XRPL</p>
+            <p className="mt-0.5 text-[12px] text-mist-500">
+              Redeem liquid FXRP back to XRP on this account (in lots of {LOT_FXRP} FXRP). Arrives in about two
+              minutes, minus a redemption fee — measured at roughly 0.5%, so {LOT_FXRP * 2} FXRP came home as 19.9 XRP.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
+              <span className="text-[12px] text-mist-500">FXRP</span>
+              <Button variant="ghost" onClick={runRedeem} disabled={!!busy || homeOver || (redeemableLots !== null && redeemableLots === 0n)}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
+            </div>
+            <AmountHint
+              available={liquid} unit="FXRP" over={homeOver}
+              note={redeemableLots !== null
+                ? (redeemableLots === 0n ? `not enough for one ${LOT_FXRP} FXRP lot yet` : `${redeemableLots} lot${redeemableLots === 1n ? "" : "s"} available`)
+                : undefined}
+              onMax={() => setHome(String(Number(redeemableLots ?? 0n) * LOT_FXRP))}
+            />
+            {actionStatus("redeem")}
+          </div>
+
           {/* ④ Cash out — the step whose absence made this policy one-way */}
           <div className="rounded-xl border hairline bg-ink-900/60 p-4">
             <p className="text-[14px] font-medium text-mist-100">④ 💸 Where it can cash out</p>
@@ -1712,28 +1746,6 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                 Nothing approved yet, so nothing can leave this account except back into XRP.
               </p>
             )}
-          </div>
-
-          {/* ③ Bring home */}
-          <div className="rounded-xl border hairline bg-ink-900/60 p-4">
-            <p className="text-[14px] font-medium text-mist-100">③ 🏠 Bring home to XRPL</p>
-            <p className="mt-0.5 text-[12px] text-mist-500">
-              Redeem liquid FXRP back to XRP on this account (in lots of {LOT_FXRP} FXRP). Arrives in about two
-              minutes, minus a redemption fee — measured at roughly 0.5%, so {LOT_FXRP * 2} FXRP came home as 19.9 XRP.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
-              <span className="text-[12px] text-mist-500">FXRP</span>
-              <Button variant="ghost" onClick={runRedeem} disabled={!!busy || homeOver || (redeemableLots !== null && redeemableLots === 0n)}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
-            </div>
-            <AmountHint
-              available={liquid} unit="FXRP" over={homeOver}
-              note={redeemableLots !== null
-                ? (redeemableLots === 0n ? `not enough for one ${LOT_FXRP} FXRP lot yet` : `${redeemableLots} lot${redeemableLots === 1n ? "" : "s"} available`)
-                : undefined}
-              onMax={() => setHome(String(Number(redeemableLots ?? 0n) * LOT_FXRP))}
-            />
-            {actionStatus("redeem")}
           </div>
         </>
       )}
