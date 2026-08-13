@@ -1372,11 +1372,19 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
 
   // value = FXRP amount in UBA (6 decimals). For redeem, FAssets works in whole lots of LOT_FXRP, so the
   // caller passes the lot count in `value` instead (see the redeem row).
-  const act = async (label: string, ref: `0x${string}`, friendly: string, expectSec: number) => {
+  /**
+   * `clear` empties the amount field once the instruction is away — mint already did this, these didn't.
+   *
+   * Leaving the amount in place meant a SUCCESSFUL deposit ended in red: the field still said 300, the
+   * liquid balance had just dropped by 300, so the over-balance check fired and the panel reported "that's
+   * more than the account has" about money it had correctly just moved.
+   */
+  const act = async (label: string, ref: `0x${string}`, friendly: string, expectSec: number, clear?: () => void) => {
     setBusy(label);
     setMsg(null);
     try {
       const hash = await write({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI, functionName: "pay", args: [walletId, FSA_WALLET, FSA_TRIGGER, ref], value: INIT_FEE });
+      clear?.();
       settle(friendly, expectSec, hash);
     } catch (e) {
       let reason = e instanceof Error ? e.message.split("\n")[0] : String(e);
@@ -1400,7 +1408,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     if (liquid !== null && amt > liquid) return setMsg({ tone: "error", text: `You only have ${fmtFxrp(liquid)} FXRP liquid to put to work.` });
     const v = vaultList.find((x) => x.vaultId.toString() === selectedVaultId);
     if (!v) return setMsg({ tone: "error", text: "Pick a vault to deposit into." });
-    act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)), `Putting ${depositAmt} FXRP to work`, 210);
+    act("Deposit", fsaRef(depositInstr(v.vaultType), amt, Number(v.vaultId)), `Putting ${depositAmt} FXRP to work`, 210, () => setDepositAmt(""));
   };
   const runRedeem = () => {
     setStatusFor("redeem");
@@ -1408,7 +1416,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     if (!(lots >= 1)) return setMsg({ tone: "error", text: `Bringing home works in lots of ${LOT_FXRP} FXRP — enter at least ${LOT_FXRP}.` });
     const need = BigInt(lots) * BigInt(LOT_FXRP) * 1_000_000n;
     if (liquid !== null && need > liquid) return setMsg({ tone: "error", text: `Bringing home ${lots * LOT_FXRP} FXRP needs more than your ${fmtFxrp(liquid)} FXRP liquid.` });
-    act("Redeem", fsaRef(0x02, BigInt(lots), 0), `Bringing ${lots * LOT_FXRP} FXRP home`, 130);
+    act("Redeem", fsaRef(0x02, BigInt(lots), 0), `Bringing ${lots * LOT_FXRP} FXRP home`, 130, () => setHome(""));
   };
 
   const addPayee = async () => {
