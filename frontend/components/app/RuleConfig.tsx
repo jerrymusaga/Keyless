@@ -1608,7 +1608,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   </option>
                 ))}
               </select>
-              <NumberInput value={depositAmt} onValueChange={setDepositAmt} decimal placeholder="0" className="w-24 text-right" />
+              <NumberInput value={depositAmt} onValueChange={setDepositAmt} decimal placeholder="0" className="w-24" />
               <span className="text-[12px] text-mist-500">FXRP</span>
               <Button variant="ghost" onClick={runDeposit} disabled={!!busy || depositOver}>{busy === "Deposit" ? "…" : "Put to work"}</Button>
             </div>
@@ -1698,7 +1698,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               minutes, minus a redemption fee — measured at roughly 0.5%, so {LOT_FXRP * 2} FXRP came home as 19.9 XRP.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24 text-right" />
+              <NumberInput value={home} onValueChange={setHome} decimal placeholder={String(LOT_FXRP)} className="w-24" />
               <span className="text-[12px] text-mist-500">FXRP</span>
               <Button variant="ghost" onClick={runRedeem} disabled={!!busy || homeOver || (redeemableLots !== null && redeemableLots === 0n)}>{busy === "Redeem" ? "…" : "Bring home"}</Button>
             </div>
