@@ -2,9 +2,30 @@
 
 **An XRP account that only does what you allow — and can't be drained, even by whoever runs it.**
 
-Keyless gives an XRP wallet a signing key that is **born inside a Flare Confidential Compute TEE and never leaves it**. The key will only ever sign a payment that an **on-chain policy on Flare** has already approved. Steal the browser control key, compromise the app, or own the machine the enclave runs on — none of it lets you move funds anywhere the rules forbid. There is no exportable key to take.
+Keyless gives an XRP wallet a signing key that is **born inside a Flare Confidential Compute TEE and never
+leaves it**. That key will only ever sign a payment an **on-chain policy on Flare** has already approved.
+Steal the browser control key, compromise the app, or own the machine the enclave runs on — none of it lets
+you move funds anywhere the rules forbid. There is no exportable key to take.
 
 > The rules aren't for you. They're for whoever gets in.
+
+**[Try it — no wallet, no signup →](https://keyless-testnet.vercel.app)** · **[Demo video →](https://youtu.be/kqzGtkM0gB8)**
+
+---
+
+## Live on Coston2 right now
+
+Read from `KeylessAccounts` events on 2026-08-13 — every number below is on-chain, not self-reported.
+
+| | |
+|---|---|
+| Accounts created | **77**, across **26** distinct owners |
+| XRPL keys generated **inside the enclave** | **70** |
+| Accounts with a policy attached | **71** |
+| Payments a contract had to approve first | **72**, across 29 accounts |
+| **XRP moved under policy** | **2,882.5** |
+| Policies locked forever (irreversible) | **3** |
+| Contract tests | **78 passing** (`forge test`) |
 
 ---
 
@@ -12,33 +33,93 @@ Keyless gives an XRP wallet a signing key that is **born inside a Flare Confiden
 
 Holding XRP is all-or-nothing. Whoever has the private key can send **anything, anywhere** — so:
 
-- **A stolen key = a drained account.** Phishing, malware, a leaked backup: one key compromise is total loss. There is no "this key may only pay my exchange" setting on a raw wallet.
-- **Bots, agents, and services must hold live keys.** An automated trading bot, an AI agent, or a payments service needs to sign on its own — which means a hot key that, if it leaks, empties the account. That risk is why few people run them and why they stay small.
-- **Custodians and teams face the same all-or-nothing choice.** Either one person holds the keys (single point of failure) or you bolt on multisig ops. Neither expresses a simple rule like "only pay approved addresses, max 10 XRP/day."
-- **XRPL can't fix this itself.** The XRP Ledger has **no smart contracts** — there is nowhere *on XRP* to enforce spending policy. So historically the only options were "trust the key holder" or "trust the operator's server." A server can promise rules, but it can also be changed, and its operator still holds a key that can sign anything.
+- **A stolen key is a drained account.** Phishing, malware, a leaked backup: one compromise is total loss.
+  There is no "this key may only pay my exchange" setting on a raw wallet.
+- **Bots, agents and services must hold live keys.** An automated strategy or an AI agent needs to sign on
+  its own, which means a hot key that empties the account if it leaks. That risk is why few people run them.
+- **Teams face the same choice.** Either one person holds the key, or you bolt on multisig ops. Neither
+  expresses a rule as simple as "only pay approved addresses, max 10 XRP a day."
+- **XRPL can't fix this itself.** The XRP Ledger has **no smart contracts** — there is nowhere *on XRP* to
+  enforce a spending policy. Historically the only options were "trust the key holder" or "trust the
+  operator's server", and a server that can promise rules can also be changed.
 
 The missing primitive: a key that is **provably unextractable** and **provably obedient to a public rule**.
 
 ## The solution
 
-Keyless puts the policy on **Flare** and binds an XRPL signing key to it inside a **Confidential Compute TEE**:
+Keyless puts the policy on **Flare** and binds an XRPL signing key to it inside a **Confidential Compute
+TEE**:
 
-- The signing key is **generated inside the enclave and never leaves** — nobody, including us or the machine operator, has ever seen it.
-- Every payment must first pass an **on-chain policy contract** on Flare before the enclave will sign it.
-- Anyone can **verify the binding on-chain**: which contract commands the enclave, and which exact code hash the enclave runs.
+- The signing key is **generated inside the enclave and never leaves** — nobody, including us or the machine
+  operator, has ever seen it.
+- Every payment must pass an **on-chain policy contract** on Flare before the enclave will sign it.
+- Anyone can **verify the binding on-chain**: which contract commands the enclave, and which exact code hash
+  the enclave runs.
 
-The trust boundary moves from "trust the key holder / trust the operator" to **"read the contract and read the registered code hash."** XRPL still settles the payment; Flare decides whether it's allowed; the TEE holds a key that can't be stolen and won't disobey.
+The trust boundary moves from "trust the key holder" to **"read the contract and read the registered code
+hash."** XRPL settles; Flare decides whether it's allowed; the TEE holds a key that can't be stolen and
+won't disobey.
 
 ---
 
 ## How it works — the trust chain
 
-Every link here is verifiable on-chain or in open source.
+Every link is verifiable on-chain or in open source.
 
-1. **The key is born in the enclave.** `createWallet` sends an `INIT` instruction that the enclave answers by **generating a fresh XRPL key from its own entropy**. No key is ever imported, and only the resulting *address* ever leaves. (Flare's reference `fce-sign` does the opposite — it imports an operator-supplied key. We deliberately have no such code path.)
-2. **The code hash is pinned on-chain.** Our Flare Confidential Compute extension (**id 65645** on Coston2) registers the enclave image's code hash (`addTeeVersion`) and a **governance signer-set**. A machine can only join the extension by attesting to *that exact hash* under *that governance* — so "trust the operator" becomes "read the registered code hash."
-3. **One contract is the only boss.** `KeylessAccounts` is the extension's sole `instructionsSender` (verify: `getTeeExtensionInstructionsSender(65645)`). The enclave acts on instructions from that contract and nothing else — not the operator, not us.
-4. **A policy gates every signature.** `pay()` runs the wallet's rule *before* the instruction is ever sent to the enclave. If the rule reverts, the enclave never sees the payment. The key can only sign what already passed policy.
+1. **The key is born in the enclave.** `createWallet` sends an `INIT` instruction, and the enclave answers by
+   **generating a fresh XRPL key from its own entropy**. No key is ever imported, and only the resulting
+   *address* leaves. (Flare's reference `fce-sign` does the opposite — it imports an operator-supplied key.
+   We deliberately have no such code path.)
+2. **The code hash is pinned on-chain.** The Keyless FCC extension (**id 65645** on Coston2) registers the
+   enclave image's code hash and a governance signer-set. A machine can only join by attesting to *that
+   exact hash* under *that governance* — so "trust the operator" becomes "read the registered code hash."
+3. **One contract is the only boss.** `KeylessAccounts` is the extension's sole `instructionsSender`
+   (`isBound = true`). The enclave acts on instructions from that contract and nothing else.
+4. **A policy gates every signature.** `pay()` runs the wallet's rule *before* the instruction is sent. If
+   the rule reverts, the enclave never sees the payment.
+
+### The enclave has exactly two operations
+
+| Op | What it does |
+|---|---|
+| `INIT` | Generate a new XRPL keypair inside the enclave; return **only** the address |
+| `XRPSEND` | **Construct** and sign one XRPL `Payment` from `(recipient, amount, paymentReference)` |
+
+`XRPSEND` never signs a transaction it is handed — it **builds** one from fields the contract already
+approved. That's what makes "it can't sign outside the rules" a fact rather than a promise, and it's why
+adding a policy never touches the enclave.
+
+### `pay()` is permissionless — on purpose
+
+```solidity
+function pay(bytes32 walletId, string calldata recipient, uint256 amount, bytes32 paymentReference)
+    external payable
+{
+    address rule = ruleOf[walletId];
+    if (rule == address(0)) revert NoRule();
+    IKeylessRule(rule).authorize(walletId, recipient, amount, paymentReference); // reverts if forbidden
+    instructionId = _send(OP_PAY, abi.encode(XrplPayment(walletId, recipient, amount, paymentReference)));
+}
+```
+
+There is no `msg.sender` check. **The rule is the gate, not the caller** — which is why you can hand an
+agent an account id and nothing else, and why a keeper can trigger a scheduled or proven payment without
+being trusted.
+
+That is only safe because of an invariant every rule must hold: **a rule must pin where the money can go,
+because nothing pins who can ask.** (One configuration once broke it; see
+[`SECURITY_NOTES.md`](SECURITY_NOTES.md) #0.)
+
+### The payment reference
+
+32 bytes. The **top 4 are the XRPL destination tag**, big-endian; the rest is a memo. The enclave sets the
+ledger's `DestinationTag` from those bytes, and `ExchangeRule` compares them against the tag pinned to the
+recipient — so a CEX deposit is bound to *(address, tag)* as a pair. Sending to the right exchange under
+someone else's tag is refused.
+
+For FXRP the same field carries a Flare Smart Account instruction id in byte 0.
+
+---
 
 ## Architecture
 
@@ -50,68 +131,100 @@ flowchart TD
 
     subgraph Flare["Flare / Coston2 — decides what may be signed"]
         KA["KeylessAccounts<br/>(multi-tenant keyring manager)"]
-        RULES["Rule modules<br/>Allowlist · RateLimit · Subscription · FDC-Escrow<br/>(each = one policy contract)"]
-        REG["Flare TEE registry (diamond)<br/>ext 65645 · code hash · governance"]
-        SV["KeylessStateVerifier<br/>(verifies attested state → writes xrplAddressOf)"]
+        RULES["Rule modules<br/>Exchange · Spending limit · Scheduled<br/>Conditional · FXRP"]
+        REG["Flare TEE manager (diamond)<br/>ext 65645 · code hash · governance"]
+        FDC["Flare Data Connector<br/>(attests real-world facts)"]
+        FSA["Flare Smart Accounts<br/>+ FAssets (FXRP)"]
     end
 
     subgraph TEE["Flare Confidential Compute — does the signing"]
-        ENC["Enclave (TEE)<br/>generates 1 XRPL key per wallet · never exports it"]
+        ENC["Enclave<br/>1 XRPL key per wallet · never exported"]
     end
 
     subgraph XRP["XRPL — settles"]
         LEDGER["XRP Ledger"]
     end
 
-    CK -->|"setRule / allow"| RULES
-    CK -->|"createWallet / pay"| KA
+    CK -->|"setRule / configure"| RULES
+    ANYONE["anyone — an agent, a keeper, a script"] -->|"pay(walletId, to, amount, ref)"| KA
+    CK --> KA
     KA -->|"authorize() — reverts if policy forbids"| RULES
-    KA -->|"getRandomTeeIds(65645) + sendInstructions{KEYLESS_XRP}"| REG
+    RULES -->|"verifyWeb2Json(proof)"| FDC
+    KA -->|"getRandomTeeIds(65645) + sendInstructions"| REG
     REG -->|"INIT / XRPSEND"| ENC
-    ENC -->|"signs + submits allowed payment"| LEDGER
-    ENC -->|"attested state (walletId → r-address)"| SV
-    SV -->|"xrplAddressOf"| KA
+    ENC -->|"signs + submits the allowed payment"| LEDGER
+    LEDGER -->|"tagged mint · FSA instructions"| FSA
 ```
 
-**Three Flare surfaces, one flow:** Coston2 (policy + the attested TEE registry) decides *what may be signed*, Flare Confidential Compute *does the signing* inside the enclave, and XRPL *settles* the payment. The FDC-escrow rule adds a fourth: a payout that only unlocks after Flare's **Data Connector** attests a real-world condition.
+**Four Flare systems, all load-bearing:** Confidential Compute holds the key, the Data Connector turns
+real-world facts into on-chain truth, FAssets moves XRP to Flare as FXRP, and Smart Accounts run the vault
+operations. XRPL settles.
 
 ---
 
-## Rule templates (the policies)
+## The five policies
 
-Each policy is one small Solidity contract; the enclave never changes.
+Each policy is one small Solidity contract. **The enclave never changes when a policy is added.**
 
-| Rule | What it enforces | For |
-| --- | --- | --- |
-| **Allowlist** | Pay only pre-approved recipients | Exchange-only / cold-storage-like accounts |
-| **RateLimit** | Allowlist **+** a max spend per time window | Trading bots, agents |
-| **Subscription** | One merchant may pull ≤ X per period | Recurring payments / pull payments |
-| **FDC-Escrow** | Pay only after Flare's Data Connector attests a condition | Conditional / escrow payouts |
+| Policy | What it enforces | For |
+|---|---|---|
+| **Exchange & allowlist** | Pay only approved addresses, each optionally pinned to an exact destination tag, plus a per-payment cap | Exchange-only and cold-storage accounts |
+| **Spending limit** | An approved list **+** a cap per rolling window, calendar period, or one-off budget | Agents, apps, allowances |
+| **Scheduled payments** | Fixed payee, fixed amount, fixed calendar slot, capped number of runs. Missed runs are skipped, never accrued | Payroll, standing orders, DCA |
+| **Conditional** | Pay only once Flare's Data Connector attests a real-world fact. Refuses **every** recipient — payee and fallback — until proven | Escrow, bounties, parametric insurance |
+| **FXRP** | Mint XRP → FXRP into an account-derived Smart Account, run whitelisted vault operations, redeem home, cash out to approved payees | Yield on idle XRP |
 
-Rules are **lockable**: `lockRule(walletId)` one-way freezes the rule pointer and its config, closing the drain vector even if the control key is later stolen.
+Policies are **lockable**: `lockRule(walletId)` one-way freezes the rule pointer *and* its configuration, so
+a later-stolen control key can't widen it.
 
 ---
 
-## Live on Coston2
+## The flows
 
-The full loop is live on the current Flare FCC governance baseline (tee-node v0.0.21 / tee-proxy v0.0.18).
+### Creating an account
+`createWallet(salt)` → `INIT` → the enclave generates an XRPL keypair from its own entropy → reports back
+only the address → `xrplAddressOf(walletId)`. **The policy is chosen before `INIT` fires**, so no account
+has ever existed without a rule.
 
-| Component | Address / id |
-| --- | --- |
-| Flare TEE registry (diamond) | `0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE` |
-| FCC extension id | **65645** |
-| KeylessAccounts | `0x57eb332D7000752ee82a35cc1A75941F0a619979` |
-| AllowlistRule | `0x7aE1dC15Acd4766132ac11A67DfdCde03bd8DeC2` |
-| RateLimitRule | `0xDED9303f6b72bd88c3F6a34414Ee2935422ab27d` |
-| SubscriptionRule | `0xA828482FaB7C149Aa6d339B31016cF0D7165AeDC` |
-| FdcEscrowRule | `0x6ef53Ce1FBDa8B13A2CCAE598a77A5bdC27402F7` |
-| TEE machine (production, governance-attested) | `0xD47F3c4E26173df11667c5Ad3723e66Fa45dD646` |
+### Making a payment
+`pay()` → the rule's `authorize()` runs on-chain → if it reverts, the enclave is never asked → otherwise
+`XRPSEND` → the enclave builds a `Payment`, signs it, submits it to XRPL.
 
-**Proven end-to-end**, same wallet and key:
-- `createWallet` → the enclave generated XRPL address `rnbfVioih6PjuQNfBGRcN44Tin31CebvRA` **inside the TEE**.
-- Attached the exchange-only Allowlist policy.
-- `pay` → a **non-allowed** recipient **reverted on-chain** (`"recipient not allowed"`) — it never reached the key.
-- `pay` → the **allowed** recipient → the enclave signed and submitted **5 XRP**, settled on XRPL testnet: [`35049922…2A6ABC6A`](https://testnet.xrpl.org/transactions/35049922E5096A090212A0B1B1EAD566F362B7D9268341E30707B24C2A6ABC6A) · `tesSUCCESS`.
+### A conditional payout
+`configure()` pins the **whole** Web2Json request — url, query params, jq transform and ABI signature — into
+the rule. A watcher (anyone can run it) reads the API, requests an attestation, waits for the voting round,
+and calls `release(proof)`. `ConditionalRule` verifies the proof against the **pinned request**, so a proof
+of a *different* API returning the same value cannot release it — the vulnerability that killed the earlier
+`FdcEscrowRule`.
+
+### The FXRP round trip
+A tagged XRPL payment to the FAssets Core Vault mints FXRP into a Smart Account **computed on-chain from the
+walletId** — not configurable, so a stolen key can't repoint the mint. Vault operations are a **closed
+allowlist** of instruction ids (redeem-home, Firelight, Upshift); everything else reverts, which is why FSA's
+later custom instructions (`0xFF`/`0xFE`) were refused with no change required. Cash-out goes only to an
+approved payee.
+
+---
+
+## Deployed on Coston2
+
+All verified live on 2026-08-13.
+
+| Component | Address |
+|---|---|
+| **KeylessAccounts** | [`0x57eb332D…19979`](https://coston2-explorer.flare.network/address/0x57eb332D7000752ee82a35cc1A75941F0a619979) |
+| Flare TEE manager (diamond) | [`0x1a9C4A0f…618aE`](https://coston2-explorer.flare.network/address/0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE) |
+| FCC extension id | **65645** · `isBound = true` |
+| Exchange & allowlist | [`0x2E5e2A10…2d7e4`](https://coston2-explorer.flare.network/address/0x2E5e2A1055670b2bc2baBd64f15825e69512d7e4) |
+| Spending limit | [`0x51Cc5c71…73710`](https://coston2-explorer.flare.network/address/0x51Cc5c71350d527fDaA188B39f28DE22F4873710) |
+| Conditional (FDC) | [`0x2d8517BC…19E77`](https://coston2-explorer.flare.network/address/0x2d8517BC464C70c21bBDBA48d3166a77A5019E77) |
+| Scheduled payments | [`0x683bDB59…7Be84`](https://coston2-explorer.flare.network/address/0x683bDB59E9B7Fb43fAfdf9B84A86d794dBf7Be84) |
+| FXRP round trip | [`0xAABAEA1D…97482`](https://coston2-explorer.flare.network/address/0xAABAEA1D7887F1681001513030bB57F7f1897482) |
+| Flare Smart Accounts (diamond) | [`0x434936d4…AD37c`](https://coston2-explorer.flare.network/address/0x434936d47503353f06750Db1A444DBDC5F0AD37c) |
+| AssetManager FXRP | [`0xc1Ca88b9…bDFA`](https://coston2-explorer.flare.network/address/0xc1Ca88b937d0b528842F95d5731ffB586f4fbDFA) |
+
+The attested TEE machine changes when the enclave is redeployed; look up the current one through the
+manager diamond rather than trusting a hardcoded address here.
 
 ---
 
@@ -119,29 +232,35 @@ The full loop is live on the current Flare FCC governance baseline (tee-node v0.
 
 ```
 keyless/
-├── backend/                         Foundry project — the contracts (the policy engine)
+├── backend/                          Foundry — the policy engine
 │   ├── src/
-│   │   ├── KeylessAccounts.sol         Multi-tenant keyring manager; sole instructionsSender
-│   │   ├── KeylessStateVerifier.sol    Verifies attested TEE state → writes xrplAddressOf (in progress)
+│   │   ├── KeylessAccounts.sol          Keyring manager; the extension's sole instructionsSender
+│   │   ├── KeylessStateVerifier.sol     Attested state → xrplAddressOf (skeleton — see Status)
 │   │   ├── rules/
-│   │   │   ├── KeylessRuleBase.sol        Shared rule scaffolding (onlyAccounts, lockable)
-│   │   │   ├── AllowlistRule.sol          Exchange-only: pay only allowlisted recipients
-│   │   │   ├── RateLimitRule.sol          Allowlist + a per-window spend cap
-│   │   │   ├── SubscriptionRule.sol       One merchant may pull ≤ X per period
-│   │   │   └── FdcEscrowRule.sol          Pay only after Flare FDC attests a condition
-│   │   └── interfaces/                  IKeylessRule, ITeeExtensionRegistry, ITeeMachineRegistry, IFdc
-│   ├── test/                         Foundry tests incl. the stolen-control-key adversary case
+│   │   │   ├── KeylessRuleBase.sol         Shared scaffolding (onlyAccounts, lockable)
+│   │   │   ├── ExchangeRule.sol            Approved recipients + destination tags + per-tx cap
+│   │   │   ├── RateLimitRule.sol           Approved recipients + rolling / calendar / one-off budgets
+│   │   │   ├── ScheduledRule.sol           Payee + amount + calendar slot, capped runs
+│   │   │   ├── ConditionalRule.sol         Pays only on an FDC-attested fact (pins the whole request)
+│   │   │   ├── FxrpRule.sol                Mint → vault → redeem → approved cash-out
+│   │   │   └── …                           AllowlistRule, SubscriptionRule, Fxrp{Mint,Defi} (superseded)
+│   │   └── lib/, interfaces/
+│   ├── test/                         78 tests, incl. the stolen-control-key adversary case
 │   └── script/                       Deploy + demo setup for Coston2
-├── enclave/                         Flare Confidential Compute extension (forked from fce-sign)
-│   ├── go/                             The TEE node — generates keys in-enclave, signs XRPL (CUSTOM)
-│   ├── go/tools/                       Registration tooling (register-extension, set-governance, register-tee…)
-│   ├── proxy/                          Self-contained tee-proxy build (v0.0.18)
-│   └── config/, scripts/               Chain configs + the go-live scripts
-├── frontend/                        Next.js 16 + React 19 + viem — the wallet UI (embedded control key)
-└── *.md                             ARCHITECTURE, FCC_TRACK2, POSITIONING, DEPLOY_RUNBOOK (root-level)
+├── enclave/                          The Flare Confidential Compute extension
+│   ├── go/                              The TEE node — generates keys in-enclave, signs XRPL
+│   ├── go/tools/                        register-extension, set-governance, register-tee…
+│   ├── proxy/                           Self-contained tee-proxy build
+│   └── deploy/executor/                 Watchers: FXRP mints, conditional releases, scheduled runs
+├── frontend/                         Next.js + viem — the wallet UI (embedded control key)
+└── *.md                              ARCHITECTURE · FCC_TRACK2 · SECURITY_NOTES · POSITIONING · …
 ```
 
-Key architecture/strategy docs at the repo root: [`ARCHITECTURE.md`](ARCHITECTURE.md) (component + sequence diagrams + threat model), [`FCC_TRACK2.md`](FCC_TRACK2.md) (the Confidential Compute deep-dive), [`POSITIONING.md`](POSITIONING.md), [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md), [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md).
+Deeper docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) (components, sequences, threat model) ·
+[`FCC_TRACK2.md`](FCC_TRACK2.md) (Confidential Compute deep-dive) ·
+[`SECURITY_NOTES.md`](SECURITY_NOTES.md) (findings and the invariants they taught) ·
+[`USER_FLOWS.md`](USER_FLOWS.md) · [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md) ·
+[`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md)
 
 ---
 
@@ -151,9 +270,9 @@ Key architecture/strategy docs at the repo root: [`ARCHITECTURE.md`](ARCHITECTUR
 # 1. Contracts
 cd backend
 forge install && forge build
-forge test -vvv                         # includes the stolen-control-key adversary test
+forge test                               # 78 tests, incl. the stolen-control-key case
 
-# 2. Run the enclave + register it (simulated TEE, Docker + ngrok)
+# 2. Enclave + registration (simulated TEE, Docker + ngrok)
 cd ../enclave
 bash ./scripts/use-chain.sh local coston2 go
 ngrok http 6674                          # paste the URL into EXT_PROXY_URL
@@ -164,43 +283,45 @@ bash ./scripts/post-build.sh             # allow-tee-version → set-governance 
 cd ../frontend && npm install && npm run dev
 ```
 
-See [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md) for the full go-live sequence and gotchas.
+See [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md) for the full go-live sequence and its gotchas.
 
 ---
 
-## The demo beat
+## Status and honesty
 
-1. Create an account — the enclave mints an XRP address; **nobody, anywhere, holds its key**.
-2. Pick a rule (exchange-only, bot with a daily cap, subscription, conditional escrow).
-3. Try to pay a random address → the contract **reverts on-chain**. Show the four lines that make theft impossible.
-4. Pay the allowed address → **real XRP settles on XRPL**, signed by a key that lives only in the TEE.
-
-Judges read Solidity and a registered code hash instead of trusting an operator.
-
----
-
-## Two Flare tracks
-
-- **Track 1 (XRP interop):** a real, useful XRP product — an undrainable, programmable XRP account — built natively on XRP where the TEE moat actually earns its keep (XRPL has no contracts).
-- **Track 2 (Confidential Compute):** the confidential-compute engine that makes it possible, with the attestation **verified on-chain**, not asserted off-chain. See [`FCC_TRACK2.md`](FCC_TRACK2.md).
-
----
-
-## Status & honesty
-
-- **Runs in Flare's simulated TEE mode (MODE=1) today** — a fixed code hash, not hardware attestation. The architecture is attestation-ready; the mainnet path is real Flare TEE machines. We say this plainly rather than imply hardware guarantees we don't yet have.
-- **`KeylessStateVerifier` is in progress.** The enclave emits signed, code-hash-bound state; the contract that verifies it on-chain and writes `xrplAddressOf` is the closing hop (see [`FCC_TRACK2.md`](FCC_TRACK2.md)).
-- **Keyless is not "a smart account for XRP."** That's access/UX (and Flare Smart Accounts already do it). Keyless is about **safety**: a TEE-held key that even your own key can't drain.
-- **Quantum:** Keyless enforces *policy*, not key secrecy against a quantum adversary — an attacker who could derive the key from the public key would sign on XRPL directly, bypassing Flare. Keyless is a policy-enforcement primitive, not post-quantum cryptography.
+- **Simulated TEE mode (`MODE=1`) today** — a fixed code hash, not hardware attestation. The architecture is
+  attestation-ready; we say this plainly rather than imply guarantees we don't yet have.
+- **`KeylessStateVerifier` is a skeleton.** The enclave emits signed, code-hash-bound state; the contract
+  that verifies it on-chain and writes `xrplAddressOf` is the closing hop.
+- **No private inputs.** The enclave buys key custody and code integrity, not confidentiality — your rules
+  are public on purpose, so anyone can check them.
+- **Keyless is not "a smart account for XRP."** That's access and UX, and Flare Smart Accounts already do it
+  well. Keyless is about **safety**: a TEE-held key that even your own key can't drain.
+- **Not post-quantum.** Keyless enforces *policy*, not key secrecy against a quantum adversary — anyone who
+  could derive the key from the public key would sign on XRPL directly, bypassing Flare entirely.
 
 ---
 
 ## Path to mainnet
 
-**Today's testnet deployment runs one simulated enclave (`MODE=1`) with keys in RAM — a demo shortcut, not the production design.** Its honest limitation: if that single machine restarts, it regenerates its identity and loses its in-memory keys, so wallets created before the restart stop working (on testnet, recover routing with [`enclave/scripts/reregister-railway.sh`](enclave/scripts/reregister-railway.sh)). On mainnet that would be unacceptable for a wallet — and it is exactly what the production architecture removes:
+**Today's deployment runs one simulated enclave with keys in RAM — a demo shortcut, not the production
+design.** Its honest limitation: if that machine restarts it regenerates its identity and loses its
+in-memory keys, so wallets created before the restart stop working (on testnet, recover routing with
+[`enclave/scripts/reregister-railway.sh`](enclave/scripts/reregister-railway.sh)). On mainnet that would be
+unacceptable for a wallet — and it's exactly what the production architecture removes:
 
-1. **Threshold key backup (`walletkeymanager`).** The signing key is secret-shared — `sk = S_provider + S_admin` — across ⅔ of Flare's data providers **plus the wallet owner's own key admins**, and re-sharded periodically. If a TEE machine dies, the key is **restored onto another attested TEE** from those shares. **Machine death ≠ fund loss**, and no single party ever holds the key.
-2. **Hardware attestation (`MODE=0`).** Real Confidential Space ties machine identity to attested hardware, so identity is stable across restarts — no orphaned registrations.
-3. **A fleet of machines.** Production runs many attested TEEs per extension; one restarting doesn't take the service down.
+1. **Threshold key backup (`walletkeymanager`).** The signing key is secret-shared —
+   `sk = S_provider + S_admin` — across ⅔ of Flare's data providers **plus the wallet owner's own key
+   admins**, and re-sharded periodically. If a machine dies the key is **restored onto another attested
+   TEE**. **Machine death ≠ fund loss**, and no single party ever holds the key.
+2. **Hardware attestation (`MODE=0`).** Real Confidential Space ties identity to attested hardware, so it's
+   stable across restarts and there are no orphaned registrations.
+3. **A fleet of machines.** Many attested TEEs per extension, so one restarting doesn't take the service
+   down.
 
-So mainnet Keyless is as trustworthy as Flare's own security root: a key that **cannot be lost by any single party and cannot be extracted by any single party** — only reconstructed by a decentralized threshold, and only inside policy-enforcing code. That backup design is a first-class Flare mechanism (see [`FCC_TRACK2.md`](FCC_TRACK2.md)); wiring Keyless onto it is the primary post-hackathon milestone.
+Note the distinction this turns on: there is no supported way to restore an old `teeId`, and Keyless doesn't
+want one. **Identity is disposable; the key is what must survive** — and Flare's own threshold backup is how.
+
+Mainnet Keyless is then as trustworthy as Flare's security root: a key that **cannot be lost by any single
+party and cannot be extracted by any single party** — only reconstructed by a decentralised threshold, and
+only inside policy-enforcing code.

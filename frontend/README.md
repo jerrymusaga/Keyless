@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Keyless — frontend
 
-## Getting Started
+The wallet UI. Next.js + React + viem, no wagmi and no connect modal — **Keyless is the wallet**, so the
+signer is an embedded control key held in the browser rather than an extension.
 
-First, run the development server:
+See the [root README](../README.md) for what Keyless is, the architecture, and the live Coston2 addresses.
+Live app: **[keyless-testnet.vercel.app](https://keyless-testnet.vercel.app)**
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## What's where
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Path | |
+|---|---|
+| `app/page.tsx` | Marketing landing |
+| `app/see/` | The no-signup showcase — every "try it" is a gasless `eth_call` against the real deployed rule |
+| `app/app/` | The wallet: account list, `/app/new`, and the account page |
+| `app/api/` | Server routes for things the browser can't do — full-history log reads, XRPL RPC, FDC condition checks, the faucet |
+| `components/app/RuleConfig.tsx` | Every policy's configuration UI |
+| `lib/keyless.ts` | Addresses, ABIs, rule metadata, the payment-reference helper |
+| `lib/embedded.ts` | The control key — 12-word phrase, import/export, backup state |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Two things worth knowing before you edit
 
-## Learn More
+**The control key is not the XRP key.** The browser holds a control key that edits rules and requests
+payments. The XRP key lives in the enclave and never leaves it. Losing the control key loses the ability to
+*change* a policy, not the money.
 
-To learn more about Next.js, take a look at the following resources:
+**Read `node_modules/next/dist/docs/` before assuming an API.** This Next.js has breaking changes from what
+you may know — see [`AGENTS.md`](AGENTS.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npx tsc --noEmit     # types
+npx eslint .         # read the output; don't compare problem counts
+npx next build       # compiles ≠ renders — still open the page
+```
