@@ -2,7 +2,6 @@
 backend/out/
 backend/cache/
 backend/broadcast/
-backend/lib/
 
 # Node
 frontend/node_modules/
