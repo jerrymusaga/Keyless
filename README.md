@@ -198,11 +198,27 @@ of a *different* API returning the same value cannot release it — the vulnerab
 `FdcEscrowRule`.
 
 ### The FXRP round trip
-A tagged XRPL payment to the FAssets Core Vault mints FXRP into a Smart Account **computed on-chain from the
-walletId** — not configurable, so a stolen key can't repoint the mint. Vault operations are a **closed
-allowlist** of instruction ids (redeem-home, Firelight, Upshift); everything else reverts, which is why FSA's
-later custom instructions (`0xFF`/`0xFE`) were refused with no change required. Cash-out goes only to an
-approved payee.
+
+Only three shapes of payment are permitted, keyed by who the XRPL recipient is.
+
+**Mint.** An XRPL payment to the FAssets Core Vault carrying a 32-byte direct-minting reference:
+`0x4642505266410018` · `00000000` · the 20-byte Flare address to credit. That address must equal
+`getPersonalAccount(xrplAddressOf(walletId))`: your own Smart Account, **computed on-chain, not
+configurable**. A stolen control key cannot repoint the mint, because there is no setter to repoint.
+
+**Vault operations.** Every Flare Smart Account instruction is an XRPL payment to FSA's provider wallet
+whose reference carries the command in **byte 0**. The rule allows exactly `0x02` (redeem FXRP back to
+XRP), `0x11–0x13` (Firelight deposit / redeem / claim) and `0x21–0x23` (Upshift deposit / redeem / claim).
+Everything else reverts — and `0x01`, **transfer FXRP to another address, is refused explicitly**. That one
+line is the whole guarantee: the yield-bearing position cannot be sent anywhere, by anyone, ever.
+
+Because the list is closed rather than a blocklist, FSA's later custom instructions (`0xFF`/`0xFE`) were
+refused the day they shipped, with no change on our side.
+
+**Cash out.** Note what is *not* relaxed: FXRP still cannot be transferred out. The only exit is to redeem
+home to XRP first — a step the rule can see — and only then pay an XRPL address the owner allowlisted. An
+earlier version had no exit at all, and a tester put it exactly right: value that can enter and never leave
+is a trap, not a guarantee.
 
 ---
 
