@@ -3,10 +3,10 @@
 Takes the app from "built" to "working live" on Coston2. ~20 minutes. You need your deployer key; I
 don't broadcast on-chain for you.
 
-**What this does:** deploys the new `KeylessAccounts` (with the XRPL-address writeback) + all four rules
-(incl. escrow), rebinds it as the extension's `instructionsSender`, points the app at the new addresses,
-and wires the three env vars. **The live TEE machine is untouched** — no enclave change, so no
-re-attestation, and the reward-epoch registration gotcha never comes up.
+**What this does:** deploys `KeylessAccounts` + all five policies, rebinds it as the extension's
+`instructionsSender`, points the app at the new addresses, and wires the three env vars. **The live TEE
+machine is untouched** — no enclave change, so no re-attestation, and the reward-epoch registration gotcha
+never comes up.
 
 ---
 
@@ -16,7 +16,7 @@ Three keys and one URL. Two of the keys can be the same as your deployer if you 
 
 | Thing | What it is | Needs gas? |
 |---|---|---|
-| **Deployer key** | Broadcasts the deploy + bind. Must own extension **454** (the account that ran `register`). | Yes (C2FLR) |
+| **Deployer key** | Broadcasts the deploy + bind. Must own extension **65645** (the account that ran `register`). | Yes (C2FLR) |
 | **Reporter key** | Writes wallets' XRPL addresses on-chain (`reportXrplAddress`). Can be the deployer, or a dedicated key. | Yes (C2FLR) |
 | **Faucet/sponsor key** | Funds users' browser control keys with a little gas. **Testnet only.** Keep it topped up, not your main key. | Yes (C2FLR) |
 | **Enclave URL** | The running enclave's base URL (its `GET /state` serves wallet → r-address). | — |
@@ -32,10 +32,13 @@ Set these in `backend/.env` (foundry auto-loads it for the script's `env()` read
 ```dotenv
 COSTON2_RPC=https://coston2-api.flare.network/ext/C/rpc
 PK=0x<deployer-private-key>
-EXTENSION_ID=454
+EXTENSION_ID=65645
+TEE_EXTENSION_REGISTRY=0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE   # the Flare TEE manager diamond
+TEE_MACHINE_REGISTRY=0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE     # same diamond; both facets live on it
 ENCLAVE_REPORTER=0x<reporter-ADDRESS>     # the reporter key's address; defaults to deployer if unset
 # CLAIM_BACK=0x...                         # optional; defaults to deployer
 # FDC_VERIFICATION=0x906507E0B64bcD494Db73bd0459d1C667e14B933   # optional; Coston2 default is baked in
+# FSA_DIAMOND / CORE_VAULT / FSA_PROVIDER_WALLET / FXRP_MAX_TRIGGER   # optional; Coston2 defaults baked in
 ```
 
 Then, from `backend/`:
@@ -63,22 +66,34 @@ Enclave reporter : 0x...   (sanity-check this matches your reporter key's addres
 
 ## 2. Bind KeylessAccounts as the extension's instructions sender
 
-This is the switch that makes the enclave obey the **new** contract. Add the new address to
-`backend/.env`:
+This is the switch that makes the enclave obey the **new** contract.
 
-```dotenv
-KEYLESS_ACCOUNTS=0x<new-KeylessAccounts-from-step-1>
-```
+> **The instructions sender is fixed when an extension is registered, not afterwards.** The registry's
+> `register(stateVerifier, instructionsSender)` is what binds it, and it mints a fresh extension id each
+> time — so pointing the enclave at a redeployed `KeylessAccounts` means registering a **new extension**,
+> not rebinding 65645. Budget for a new id, and expect to re-run the machine registration against it.
+>
+> (An earlier `script/BootstrapExtension.s.sol` is referenced in older notes. It was deleted when the
+> single-wallet contracts were removed — don't go looking for it.)
 
-Then:
+From `enclave/`:
 
 ```bash
-forge script script/BootstrapExtension.s.sol:BindPolicy \
-  --rpc-url coston2 --broadcast --private-key "$PK"
+cd go/tools
+go run ./cmd/register-extension \
+  -c https://coston2-api.flare.network/ext/C/rpc \
+  -instructionSender 0x<new-KeylessAccounts-from-step-1>
 ```
 
-It asserts success itself (`getTeeExtensionInstructionsSender(454) == KeylessAccounts`) and reverts if
-the bind didn't take.
+It prints the new extension id. Then have the contract discover and cache it — once, permanently:
+
+```bash
+cast send 0x<new-KeylessAccounts> "setExtensionId()" \
+  --rpc-url coston2 --private-key "$PK"
+```
+
+`setExtensionId()` scans the registry for the id bound to this address, so it takes no argument and can
+only ever be called once.
 
 ---
 
