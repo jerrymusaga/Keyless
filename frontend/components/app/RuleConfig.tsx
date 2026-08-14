@@ -1708,11 +1708,18 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                             // measured on Upshift vault 2: 50 FXRP in, 49.999999 out, purely integer
                             // division. Below a thousandth of an FXRP there is no information, only noise.
                             if (abs < 1000n) {
-                              return <span className="block text-[10px] text-mist-500">even on {fmtFxrp(put)} in</span>;
+                              return (
+                                <span className="block text-[10px] text-mist-500">
+                                  you put in {fmtFxrp(put)} · no yield yet
+                                </span>
+                              );
                             }
                             return (
-                              <span className={`block text-[10px] ${gain > 0n ? "text-allow-500" : "text-mist-500"}`}>
-                                {gain > 0n ? "+" : "−"}{fmtFxrp(abs)} on {fmtFxrp(put)} in
+                              <span className="block text-[10px] text-mist-500">
+                                you put in {fmtFxrp(put)} ·{" "}
+                                <span className={gain > 0n ? "text-allow-500" : "text-refuse-500"}>
+                                  {gain > 0n ? "+" : "−"}{fmtFxrp(abs)}
+                                </span>
                               </span>
                             );
                           })()}
