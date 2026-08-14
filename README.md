@@ -208,9 +208,12 @@ configurable**. A stolen control key cannot repoint the mint, because there is n
 
 **Vault operations.** Every Flare Smart Account instruction is an XRPL payment to FSA's provider wallet
 whose reference carries the command in **byte 0**. The rule allows exactly `0x02` (redeem FXRP back to
-XRP), `0x11–0x13` (Firelight deposit / redeem / claim) and `0x21–0x23` (Upshift deposit / redeem / claim).
-Everything else reverts — and `0x01`, **transfer FXRP to another address, is refused explicitly**. That one
-line is the whole guarantee: the yield-bearing position cannot be sent anywhere, by anyone, ever.
+XRP), `0x11–0x13` (Firelight deposit / redeem / claim) and `0x21–0x23` (Upshift deposit / requestRedeem /
+claim). Everything else reverts — and `0x01`, **transfer FXRP to another address, is refused explicitly**.
+That one line is the whole guarantee: no instruction this account can issue moves the position to anyone
+else. The XRPL payment that carries an instruction is a messaging cost, not the value being moved, so it
+is capped separately — 10 XRP on the live rule. Minting is deliberately uncapped: a bigger mint just
+credits more FXRP to your own account.
 
 Because the list is closed rather than a blocklist, FSA's later custom instructions (`0xFF`/`0xFE`) were
 refused the day they shipped, with no change on our side.
