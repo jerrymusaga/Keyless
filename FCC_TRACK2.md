@@ -37,20 +37,25 @@ impossible on XRP — which is what makes this confidential compute, not a serve
   each generated in-TEE and each bound to its *own* on-chain rule. It's a key-management primitive, not
   just a signing endpoint.
 - **Policy-bound signing.** The authorization surface is a pluggable on-chain rule (allowlist, rate
-  limit, subscription, FDC-escrow, lockable) — the enclave stays generic; the policy is where the
-  product lives.
+  limit, scheduled, conditional, FXRP — all lockable) — the enclave stays generic; the policy is where
+  the product lives.
 
 ## What's verified on-chain — the stateVerifier
 The strongest confidential-compute claim is "the chain *verifies* what the TEE did." Today the enclave's
 INIT result (the generated r-address) is written back by a trusted relayer. **`KeylessStateVerifier`**
 (`src/KeylessStateVerifier.sol`) replaces that with a contract that accepts the r-address **only if the
 TEE attested to it** — set as the extension's `_teeExtensionStateVerifier`. Skeleton is in the repo with
-the known parts done (decode + idempotent write path) and the exact attestation-verification interface
-marked `TODO`, to finish the moment Flare's updated FCC guides expose it. This is the direct answer to
-"what is verified on-chain?"
+the known parts done (decode + idempotent write path) and the attestation check marked `TODO`, failing
+closed until it is real.
+
+Two things have to land before it can be finished, and one of them is ours: Flare's
+`ITeeExtensionStateVerifier` interface (not yet published), and an enclave that emits `walletId → r-address`
+through tee-node's **attested** state channel instead of the custom `GET /state` it uses today. So the
+honest answer to "what is verified on-chain?" is currently: the machine's **code hash and governance**, and
+**which contract may command it** — but not yet the enclave's output.
 
 ## Composition: FCC + FDC + XRPL in one flow
-The FDC-escrow rule shows the confidential-compute account **composing with Flare's data layer**: the
+`ConditionalRule` shows the confidential-compute account **composing with Flare's data layer**: the
 TEE-held key signs a native XRP payout **only after Flare's Data Connector has attested a real-world
 condition** (e.g. delivery proven). Three Flare surfaces — **FCC** (the key), **FDC** (the condition),
 **XRPL** (settlement) — in a single, honest flow. (To be precise: FDC ≠ FCC; the escrow *composes* them,
@@ -69,8 +74,10 @@ machine **0xD47F3c4E…dD646** (production, governance-attested, code hash `0x19
 - **Runs in Flare's simulated TEE mode (MODE=1) today** — a fixed code hash, not hardware attestation.
   The architecture is attestation-ready; the mainnet path is real Flare TEE machines. We say this plainly
   rather than imply hardware guarantees we don't yet have.
-- **The stateVerifier is the remaining hop.** The enclave already emits signed, code-hash-bound state; the
-  on-chain contract that verifies it and writes `xrplAddressOf` is in progress (skeleton in the repo).
+- **The stateVerifier is the remaining hop, and `xrplAddressOf` is written by a trusted relayer key today.**
+  That key can't move funds, change a rule, or make the enclave sign anything — but it names your deposit
+  address, so it is the last trusted role in the design. Closing it needs an enclave change, which needs
+  threshold key backup first: a restart in simulation mode loses every key.
 
 ## What to point a judge at
 - `getTeeExtensionInstructionsSender(65645)` → KeylessAccounts `0x57eb332D…` (the enclave obeys the contract).

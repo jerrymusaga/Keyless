@@ -310,7 +310,8 @@ keyless/
 │   ├── proxy/                           Self-contained tee-proxy build
 │   └── deploy/executor/                 Watchers: FXRP mints, conditional releases, scheduled runs
 ├── frontend/                         Next.js + viem — the wallet UI (embedded control key)
-└── *.md                              ARCHITECTURE · FCC_TRACK2 · SECURITY_NOTES · POSITIONING · …
+└── *.md                              FCC_TRACK2 · SECURITY_NOTES · USER_FLOWS · DEPLOY_RUNBOOK ·
+                                      STAKING_ROADMAP
 ```
 
 Deeper docs: [`FCC_TRACK2.md`](FCC_TRACK2.md) (Confidential Compute deep-dive) ·
@@ -388,8 +389,11 @@ why this list is a consequence of the architecture rather than a wishlist.
    key admins, so a dead machine doesn't mean dead funds. **The primary post-hackathon milestone.**
 2. **Hardware attestation (`MODE=0`).** Move off the simulated enclave onto real Confidential Space, so the
    code hash is attested by hardware rather than fixed by configuration.
-3. **Finish `KeylessStateVerifier`.** The enclave already emits signed, code-hash-bound state; the contract
-   that verifies it on-chain and writes `xrplAddressOf` is the last hop of the trust chain.
+3. **Finish `KeylessStateVerifier`.** Today a trusted relayer key writes `xrplAddressOf`. Replacing it with
+   a contract that accepts the address only if the TEE attested to it takes three things: Flare's
+   `ITeeExtensionStateVerifier` interface, an enclave that publishes `walletId → r-address` through
+   tee-node's attested state channel rather than its own HTTP endpoint, and the verifier itself. The
+   enclave change is why this waits on (1) — a restart today loses every key.
 
 ### Then — things native XRP structurally cannot do
 - **Caller-aware rules.** `authorize()` doesn't currently see who called `pay()`. Passing the caller through
@@ -415,8 +419,10 @@ why this list is a consequence of the architecture rather than a wishlist.
 
 - **Simulated TEE mode (`MODE=1`) today** — a fixed code hash, not hardware attestation. The architecture is
   attestation-ready; we say this plainly rather than imply guarantees we don't yet have.
-- **`KeylessStateVerifier` is a skeleton.** The enclave emits signed, code-hash-bound state; the contract
-  that verifies it on-chain and writes `xrplAddressOf` is the closing hop.
+- **`KeylessStateVerifier` is a skeleton, and `xrplAddressOf` is written by a trusted relayer key.** That
+  key is the last trusted role in the system. It cannot move funds, change a rule, or make the enclave sign
+  anything — but it names your deposit address, and `FxrpRule` derives your mint target from it. The
+  verifier is what removes it.
 - **No private inputs.** The enclave buys key custody and code integrity, not confidentiality — your rules
   are public on purpose, so anyone can check them.
 - **Keyless is not "a smart account for XRP."** That's access and UX, and Flare Smart Accounts already do it
