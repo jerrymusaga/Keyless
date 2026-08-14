@@ -4,6 +4,10 @@ pragma solidity ^0.8.23;
 import {KeylessRuleBase} from "./KeylessRuleBase.sol";
 
 /// @title AllowlistRule
+/// @custom:status RETIRED — superseded by ExchangeRule, which is this plus optional destination-tag
+///         pinning and an optional per-payment cap. New accounts are never given this rule, and the
+///         deploy script no longer deploys it. The source is kept because the deployed copy still
+///         governs accounts created before the switch, and their funds depend on it. Do not delete.
 /// @notice The simplest rule: a wallet may only pay addresses its owner has allowlisted. Everything
 ///         else reverts.
 ///

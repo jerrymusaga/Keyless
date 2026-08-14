@@ -4,6 +4,10 @@ pragma solidity ^0.8.23;
 import {KeylessRuleBase} from "./KeylessRuleBase.sol";
 
 /// @title SubscriptionRule
+/// @custom:status RETIRED — superseded by RateLimitRule, which expresses the same thing (a single
+///         allowlisted recipient plus a cap per window) without a separate contract. New accounts are
+///         never given this rule, and the deploy script no longer deploys it. The source is kept because
+///         the deployed copy still governs accounts created before the switch. Do not delete.
 /// @notice A pull-payment plan: one fixed merchant may pull up to `maxPerPeriod` per `period` from the
 ///         wallet, and nothing else can. The owner can cancel at any time.
 ///

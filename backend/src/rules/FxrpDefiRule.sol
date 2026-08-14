@@ -4,6 +4,10 @@ pragma solidity ^0.8.23;
 import {KeylessRuleBase} from "./KeylessRuleBase.sol";
 
 /// @title FxrpDefiRule
+/// @custom:status RETIRED — merged into FxrpRule, which does the whole round trip (mint → vault →
+///         redeem home → approved cash-out) in one policy. New accounts are never given this rule, and
+///         the deploy script no longer deploys it; the deployed copy still governs older accounts.
+///         Do not delete.
 /// @notice The "FXRP in Flare DeFi, undrainable" template. Once you hold FXRP, this account can put it to
 ///         work in Flare Smart Accounts — deposit into yield vaults, withdraw, and redeem back to XRP — but
 ///         it can NEVER transfer FXRP out to another address. Even a stolen key can only stake your FXRP or

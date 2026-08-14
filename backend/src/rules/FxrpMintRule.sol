@@ -4,6 +4,10 @@ pragma solidity ^0.8.23;
 import {KeylessRuleBase} from "./KeylessRuleBase.sol";
 
 /// @title FxrpMintRule
+/// @custom:status RETIRED — merged into FxrpRule, which does the whole round trip (mint → vault →
+///         redeem home → approved cash-out) in one policy. Splitting mint from DeFi meant an account
+///         could enter but never leave. New accounts are never given this rule, and the deploy script no
+///         longer deploys it; the deployed copy still governs older accounts. Do not delete.
 /// @notice The "safe FXRP mint" template. A wallet may make exactly one kind of payment: an XRP transfer
 ///         to the FAssets Core Vault carrying the direct-minting memo that credits FXRP to a Flare address
 ///         you chose. Nothing else. So the account becomes an undrainable on-ramp — even a stolen key can
