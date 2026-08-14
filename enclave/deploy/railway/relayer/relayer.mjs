@@ -41,8 +41,14 @@ const ACCOUNTS_ABI = [
   { type: "function", name: "reportXrplAddress", stateMutability: "nonpayable", inputs: [{ name: "walletId", type: "bytes32" }, { name: "xrplAddress", type: "string" }], outputs: [] },
 ];
 
-const pub = createPublicClient({ chain: coston2, transport: http(RPC) });
-const wallet = createWalletClient({ account: privateKeyToAccount(KEY.startsWith("0x") ? KEY : `0x${KEY}`), chain: coston2, transport: http(RPC) });
+// viem's http transport defaults to a 10s timeout and no retries. Coston2's public RPC regularly takes
+// longer than that under load, and a bare transport turns every slow moment into "The request took too
+// long to respond" — which is what silently stopped addresses being written for 33 hours: the enclave was
+// healthy, the keys existed, and every reportXrplAddress died on the RPC call.
+const transport = http(RPC, { timeout: 45_000, retryCount: 3, retryDelay: 1_000 });
+
+const pub = createPublicClient({ chain: coston2, transport });
+const wallet = createWalletClient({ account: privateKeyToAccount(KEY.startsWith("0x") ? KEY : `0x${KEY}`), chain: coston2, transport });
 
 async function fetchState() {
   const res = await fetch(`${STATE_URL}/state`, { headers: { "ngrok-skip-browser-warning": "true" } });
@@ -65,7 +71,9 @@ async function tick() {
       const existing = await pub.readContract({ address: ACCOUNTS, abi: ACCOUNTS_ABI, functionName: "xrplAddressOf", args: [walletId] });
       if (existing && existing.length > 0) continue; // already on-chain
       const hash = await wallet.writeContract({ address: ACCOUNTS, abi: ACCOUNTS_ABI, functionName: "reportXrplAddress", args: [walletId, xrplAddress] });
-      await pub.waitForTransactionReceipt({ hash });
+      // Don't wedge the whole loop on one receipt. The write is what matters and it is idempotent
+      // on-chain, so if this times out the next tick sees the address already recorded and skips it.
+      await pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
       console.log(`[relayer] reported ${walletId} -> ${xrplAddress} (${hash})`);
     } catch (e) {
       console.error(`[relayer] report failed for ${walletId}: ${e.shortMessage || e.message}`);
@@ -74,5 +82,22 @@ async function tick() {
 }
 
 console.log(`[relayer] polling ${STATE_URL}/state every ${INTERVAL}ms -> reportXrplAddress on ${ACCOUNTS}`);
-await tick();
-setInterval(() => { tick().catch((e) => console.error(`[relayer] tick error: ${e.message}`)); }, INTERVAL);
+
+// One tick at a time. Each wallet costs a read, a write and a receipt wait, so a slow RPC easily pushes a
+// tick past the 15s interval — and setInterval doesn't care. Overlapping ticks would build two txs for the
+// same walletId on the same nonce, so the retry that was meant to fix a stall becomes the thing causing it.
+let running = false;
+async function safeTick() {
+  if (running) return;
+  running = true;
+  try {
+    await tick();
+  } catch (e) {
+    console.error(`[relayer] tick error: ${e.message}`);
+  } finally {
+    running = false;
+  }
+}
+
+await safeTick();
+setInterval(safeTick, INTERVAL);
