@@ -8,6 +8,10 @@ backend/lib/
 frontend/node_modules/
 frontend/dist/
 
+# Next build output. The root one is a stray from running `next` outside frontend/;
+# two trace files were committed that way before this rule existed.
+.next/
+
 # Env / secrets
 # NOTE: .env.<chain> is where the funded deployer key goes (the enclave's scripts read it),
 # so ignore every .env variant, not just bare .env. Only the example is tracked.
