@@ -1199,6 +1199,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [depositAmt, setDepositAmt] = useState("");
   const [pendingExits, setPendingExits] = useState<PendingExit[]>([]);
   const [xrpBal, setXrpBal] = useState<bigint | null>(null); // XRPL side, for the mint field
+  const usd = useXrpUsd(); // FXRP is 1:1 with XRP and shares its 6 decimals, so the XRP price converts both
   const [payees, setPayees] = useState<string[]>([]);
   const [payeeInput, setPayeeInput] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
@@ -1554,10 +1555,13 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-[12px] text-mist-500">Your FXRP portfolio</p>
-                <p className="mt-0.5 font-mono text-2xl text-mist-100">{portfolio === null ? "…" : `${fmtFxrp(total)} FXRP`}</p>
+                <p className="mt-0.5 font-mono text-2xl text-mist-100">
+                  {portfolio === null ? "…" : `${fmtFxrp(total)} FXRP`}
+                  {portfolio !== null && <span className="ml-1 font-sans text-base text-mist-500"><UsdHint drops={total} usd={usd} /></span>}
+                </p>
                 {portfolio !== null && (
                   <p className="mt-0.5 text-[12px] text-mist-500">
-                    <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)}</span> liquid · <span className="text-mist-300">{fmtFxrp(inVaults)}</span> earning in vaults
+                    <span className="text-mist-300">{fmtFxrp(liquid ?? 0n)}</span> liquid · <span className="text-mist-300">{fmtFxrp(inVaults)}</span> in vaults
                   </p>
                 )}
               </div>
@@ -1672,9 +1676,19 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   const canExit = v.vaultType === 1; // Firelight; Upshift's exit path isn't verified yet
                   return (
                     <div key={key} className="flex flex-wrap items-center justify-between gap-2 border-t hairline pt-2 first:border-t-0 first:pt-0">
-                      <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} yield vault <span className="text-mist-500">#{key}</span></p>
+                      <div className="min-w-0">
+                        <p className="text-[13px] text-mist-200">{VAULT_TYPE_NAME[v.vaultType] ?? "Vault"} yield vault <span className="text-mist-500">#{key}</span></p>
+                        {/* Shares are what the vault owes you; value is what they're worth right now. Showing
+                            both makes the mechanism visible — the share count holds still while the value
+                            moves, which is the thing "earning" was asserting without ever evidencing. */}
+                        <p className="mt-0.5 text-[11px] text-mist-500">{fmtFxrp(v.shares)} shares</p>
+                      </div>
                       <div className="flex items-center gap-3">
-                        <p className="text-[12px]"><span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span> <span className="text-mist-500">earning</span></p>
+                        <p className="text-right text-[12px]">
+                          <span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span>
+                          <span className="text-mist-500"><UsdHint drops={v.assets} usd={usd} /></span>
+                          <span className="block text-[10px] text-mist-500">worth now</span>
+                        </p>
                         {canExit && (
                           <Button variant="ghost" onClick={() => runExit(v)} disabled={!!busy}>{busy === "Exit" ? "…" : "Take it out"}</Button>
                         )}
@@ -1683,6 +1697,15 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   );
                 })}
               </div>
+              {/* Said plainly, because the alternative is implying a number we don't have. The app never
+                  recorded what you deposited — the amount lives in the XRPL payment reference, which
+                  PaymentAuthorized doesn't emit — so there is no basis to subtract and no honest "you have
+                  earned X" to show. What IS true is that this figure comes from the vault, not from us. */}
+              <p className="mt-3 border-t hairline pt-2 text-[11px] leading-relaxed text-mist-500">
+                Value is read live from the vault and rises as it accrues — Firelight settles each period,
+                so it steps up rather than ticking. Keyless doesn&rsquo;t record what you put in, so it
+                can&rsquo;t tell you your gain; the vault&rsquo;s own page can.
+              </p>
 
               {/* Exits that have left the vault but aren't collectable yet. Read straight from the vault,
                   so this survives a refresh, a different device, and us not being here. */}
