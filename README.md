@@ -310,14 +310,12 @@ keyless/
 │   ├── proxy/                           Self-contained tee-proxy build
 │   └── deploy/executor/                 Watchers: FXRP mints, conditional releases, scheduled runs
 ├── frontend/                         Next.js + viem — the wallet UI (embedded control key)
-└── *.md                              FCC_TRACK2 · SECURITY_NOTES · USER_FLOWS · DEPLOY_RUNBOOK ·
-                                      STAKING_ROADMAP
+└── *.md                              FCC_TRACK2 · SECURITY_NOTES · USER_FLOWS · DEPLOY_RUNBOOK
 ```
 
 Deeper docs: [`FCC_TRACK2.md`](FCC_TRACK2.md) (Confidential Compute deep-dive) ·
 [`SECURITY_NOTES.md`](SECURITY_NOTES.md) (findings and the invariants they taught) ·
-[`USER_FLOWS.md`](USER_FLOWS.md) · [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md) ·
-[`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md)
+[`USER_FLOWS.md`](USER_FLOWS.md) · [`DEPLOY_RUNBOOK.md`](DEPLOY_RUNBOOK.md)
 
 ---
 
@@ -403,7 +401,8 @@ why this list is a consequence of the architecture rather than a wishlist.
   issued currency). Teaching the instruction and the enclave to build one would let a policy hold a rule
   like "convert to RLUSD and pay, and nothing else."
 - **Yield without wrapping.** Native XRPL AMM positions under policy, and an enclave-held Flare staking key
-  that can stake but can never withdraw elsewhere — see [`STAKING_ROADMAP.md`](STAKING_ROADMAP.md).
+  that can stake but can never withdraw elsewhere. Keyless wouldn't source the yield — it would make an
+  existing position undrainable, which is the same promise as the rest of the product.
 - **DAO-controlled XRP.** A DAO on Flare votes; native XRP moves on XRPL. No bridge, no wrapped asset, no
   multisig ceremony.
 
