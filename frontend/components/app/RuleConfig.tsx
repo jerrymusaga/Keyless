@@ -1242,6 +1242,28 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
     } catch { /* transient */ }
   }, []);
 
+  /**
+   * The XRPL-side balance, which is what the mint field spends (everything else here spends FXRP).
+   *
+   * This has to be re-read on a timer, not once on load. It was fetched a single time and then never
+   * again: fund the account after opening the panel, or catch a flaky XRPL node that reports unfunded,
+   * and `xrpBal` pinned at 0 for the life of the page — so every amount read as "more than this account
+   * has" and Mint stayed disabled with no way back but a refresh. A balance the user can change from
+   * outside the app is not a value you read once.
+   *
+   * An unreadable balance stays `null` rather than becoming 0. Null means "unknown", which shows no
+   * maximum and blocks nothing; 0 means "definitely empty", which blocks everything. Collapsing the two
+   * is what turned a slow node into a dead button.
+   */
+  const readXrpBalance = useCallback(async () => {
+    try {
+      const xaddr = await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI as never, functionName: "xrplAddressOf", args: [walletId] }) as string;
+      if (!xaddr) return;
+      const b = await getXrplBalance(xaddr);
+      setXrpBal(b.funded ? b.drops : 0n);
+    } catch { /* leave it unknown; the field just won't show a maximum */ }
+  }, [walletId]);
+
   const load = useCallback(async () => {
     try {
       const cv = await publicClient.readContract({ address: RULES.fxrp as `0x${string}`, abi: RULE_ABIS.fxrp as never, functionName: "coreVaultAddress" }) as string;
@@ -1255,12 +1277,7 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       ]) as [bigint, bigint, bigint];
       setMintFee({ bips, minUba, execUba });
     } catch { /* the estimate just doesn't render */ }
-    // The mint field spends XRP, not FXRP, so it needs the ledger balance — held in state rather than
-    // fetched at click time, so "you don't have that much" appears while typing instead of after.
-    try {
-      const xaddr = await publicClient.readContract({ address: ADDRESSES.accounts, abi: ACCOUNTS_ABI as never, functionName: "xrplAddressOf", args: [walletId] }) as string;
-      if (xaddr) { const b = await getXrplBalance(xaddr); setXrpBal(b.funded ? b.drops : 0n); }
-    } catch { /* leave it unknown; the field just won't show a maximum */ }
+    await readXrpBalance();
     try {
       const res = await fetch("/api/rule-config", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -1296,9 +1313,14 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   // refresh to see it. Polls a little faster while an action is settling.
   useEffect(() => {
     if (!pa) return;
-    const t = setInterval(() => readBalance(pa), working ? 5000 : 15000);
+    const t = setInterval(() => {
+      readBalance(pa);
+      // The XRPL balance moves for the same reasons the FXRP one does — a mint spends it, a redemption
+      // returns it — and it also moves when the user funds the account from another wallet mid-session.
+      readXrpBalance();
+    }, working ? 5000 : 15000);
     return () => clearInterval(t);
-  }, [pa, working, readBalance]);
+  }, [pa, working, readBalance, readXrpBalance]);
 
   // 1s heartbeat so the "~Ns left" countdown re-renders while an action is in flight.
   useEffect(() => {
@@ -1728,11 +1750,21 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
               wallet — and to nobody else. <span className="text-mist-400">FXRP itself still can&rsquo;t be
               transferred to anyone; bring it home first, which this account can prove it did.</span>
             </p>
+            {/* The address field gets its own row until there's room for one. `flex-1` alone let it
+                shrink to a sliver on a phone — the nickname box and the button hold their widths, so
+                everything left over went to the field you actually have to read 30-odd characters in. */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Input value={payeeInput} onChange={(e) => setPayeeInput(e.target.value)} placeholder="rExchangeDeposit…" className="min-w-0 flex-1" />
+              <Input value={payeeInput} onChange={(e) => setPayeeInput(e.target.value)} placeholder="rExchangeDeposit…" className="min-w-0 basis-full sm:basis-auto sm:flex-1" />
               <NameThisAddress owner={address} address={payeeInput} valid={isXrpl} className="w-36 shrink-0" />
-              <Button onClick={addPayee} disabled={!!busy}>{busy === "Payee" ? "…" : "Approve"}</Button>
+              {/* Approving costs gas and a wallet round-trip, so an address that can't be valid should
+                  never get that far. addPayee still asserts — this only stops the trip being wasted. */}
+              <Button onClick={addPayee} disabled={!!busy || !isXrpl(payeeInput)}>{busy === "Payee" ? "…" : "Approve"}</Button>
             </div>
+            {payeeInput.trim() !== "" && !isXrpl(payeeInput) && (
+              <p className="mt-1.5 text-[11px] text-refuse-500">
+                That doesn&rsquo;t look like an XRPL address — they start with <code className="font-mono">r</code> and are 25–35 characters.
+              </p>
+            )}
             {payees.length > 0 && (
               <div className="mt-3 space-y-2">
                 {payees.map((r) => (
