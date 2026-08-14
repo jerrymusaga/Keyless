@@ -1,7 +1,33 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { ADDRESSES, EXTENSION_ID, explorerAddress } from "@/lib/keyless";
 import { ExternalIcon } from "./ui";
 
+/**
+ * The machine serving the extension is read at view time, never hardcoded.
+ *
+ * The simulated enclave gets a new identity on every restart, and restarts don't coincide with deploys —
+ * so both a constant and a build-time read would go stale silently and start pointing at a machine that
+ * no longer serves the extension. /api/chain is uncached, so this is the address as of the moment you
+ * looked. If the read fails, the link is omitted rather than shown stale.
+ */
+function useCurrentTeeMachine(): string | null {
+  const [machine, setMachine] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/chain", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setMachine(d?.activeMachines?.[0] ?? null))
+      .catch(() => {});
+  }, []);
+
+  return machine;
+}
+
 export function Footer() {
+  const teeMachine = useCurrentTeeMachine();
+
   return (
     <footer className="border-t hairline px-6 py-16">
       <div className="mx-auto w-full max-w-5xl">
@@ -26,7 +52,9 @@ export function Footer() {
               <ul className="mt-3 space-y-2">
                 <Link href={explorerAddress(ADDRESSES.accounts)} label="KeylessAccounts" />
                 <Link href={explorerAddress(ADDRESSES.teeManager)} label="Flare TEE manager" />
-                <Link href={explorerAddress(ADDRESSES.teeMachine)} label="TEE machine" />
+                {teeMachine ? (
+                  <Link href={explorerAddress(teeMachine)} label="TEE machine (live)" />
+                ) : null}
               </ul>
             </div>
             <div>

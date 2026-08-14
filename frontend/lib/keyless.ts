@@ -34,8 +34,10 @@ export const ADDRESSES = {
   accounts: "0x57eb332D7000752ee82a35cc1A75941F0a619979",
   /** Deployer. Holds no XRPL key — that is the point. */
   owner: "0xc760AB37E00082202e1659C256E01372f1739886",
-  /** The governance-attested TEE machine serving extension 65645. */
-  teeMachine: "0xD47F3c4E26173df11667c5Ad3723e66Fa45dD646",
+  // NOTE: there is deliberately no `teeMachine` constant. The machine serving extension 65645 changes
+  // whenever the enclave is redeployed, so any hardcoded address here goes stale silently and starts
+  // lying. Read it live instead: `getRandomTeeIds(65645, 1)` on the manager diamond — which is what
+  // /api/chain does, and what the footer and the /see page display.
   /** Flare Smart Accounts diamond (SmartAccountManager) on Coston2 — where FXRP mints land and DeFi vaults
    *  live. Its ReaderFacet exposes each personal account's FXRP portfolio + the vault registry. */
   fsaDiamond: "0x434936d47503353f06750Db1A444DBDC5F0AD37c",
