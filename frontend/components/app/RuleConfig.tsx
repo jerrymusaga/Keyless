@@ -1200,6 +1200,9 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
   const [pendingExits, setPendingExits] = useState<PendingExit[]>([]);
   const [xrpBal, setXrpBal] = useState<bigint | null>(null); // XRPL side, for the mint field
   const usd = useXrpUsd(); // FXRP is 1:1 with XRP and shares its 6 decimals, so the XRP price converts both
+  // vaultId -> what this account deposited and hasn't taken out, recovered from the calldata of its own
+  // pay() calls. See /api/fxrp-basis; without it a position can show a value but never a gain.
+  const [basis, setBasis] = useState<Record<string, string> | null>(null);
   const [payees, setPayees] = useState<string[]>([]);
   const [payeeInput, setPayeeInput] = useState("");
   const [selectedVaultId, setSelectedVaultId] = useState("");
@@ -1279,6 +1282,14 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
       setMintFee({ bips, minUba, execUba });
     } catch { /* the estimate just doesn't render */ }
     await readXrpBalance();
+    try {
+      const res = await fetch("/api/fxrp-basis", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ walletId }), cache: "no-store",
+      });
+      const b = await res.json();
+      if (b.basis) setBasis(b.basis);
+    } catch { /* no basis just means no gain figure, which is the honest fallback */ }
     try {
       const res = await fetch("/api/rule-config", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -1687,7 +1698,24 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                         <p className="text-right text-[12px]">
                           <span className="font-mono text-allow-500">{fmtFxrp(v.assets)} FXRP</span>
                           <span className="text-mist-500"><UsdHint drops={v.assets} usd={usd} /></span>
-                          <span className="block text-[10px] text-mist-500">worth now</span>
+                          {(() => {
+                            const put = basis?.[key] ? BigInt(basis[key]) : null;
+                            if (put === null || put === 0n) return null;
+                            const gain = v.assets - put;
+                            const abs = gain >= 0n ? gain : -gain;
+                            // Vault share maths rounds, so a position can sit a few base units either side
+                            // of what went in. Rendering that as "−0.000001" reads as a loss, or a bug —
+                            // measured on Upshift vault 2: 50 FXRP in, 49.999999 out, purely integer
+                            // division. Below a thousandth of an FXRP there is no information, only noise.
+                            if (abs < 1000n) {
+                              return <span className="block text-[10px] text-mist-500">even on {fmtFxrp(put)} in</span>;
+                            }
+                            return (
+                              <span className={`block text-[10px] ${gain > 0n ? "text-allow-500" : "text-mist-500"}`}>
+                                {gain > 0n ? "+" : "−"}{fmtFxrp(abs)} on {fmtFxrp(put)} in
+                              </span>
+                            );
+                          })()}
                         </p>
                         {canExit && (
                           <Button variant="ghost" onClick={() => runExit(v)} disabled={!!busy}>{busy === "Exit" ? "…" : "Take it out"}</Button>
@@ -1697,15 +1725,6 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                   );
                 })}
               </div>
-              {/* Said plainly, because the alternative is implying a number we don't have. The app never
-                  recorded what you deposited — the amount lives in the XRPL payment reference, which
-                  PaymentAuthorized doesn't emit — so there is no basis to subtract and no honest "you have
-                  earned X" to show. What IS true is that this figure comes from the vault, not from us. */}
-              <p className="mt-3 border-t hairline pt-2 text-[11px] leading-relaxed text-mist-500">
-                Value is read live from the vault and rises as it accrues — Firelight settles each period,
-                so it steps up rather than ticking. Keyless doesn&rsquo;t record what you put in, so it
-                can&rsquo;t tell you your gain; the vault&rsquo;s own page can.
-              </p>
 
               {/* Exits that have left the vault but aren't collectable yet. Read straight from the vault,
                   so this survives a refresh, a different device, and us not being here. */}
@@ -1734,12 +1753,6 @@ function FxrpConfig({ walletId }: { walletId: `0x${string}` }) {
                 </div>
               )}
 
-              {positions.some((v) => v.vaultType !== 1) && (
-                <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
-                  Upshift vaults use a different exit path we haven&rsquo;t verified end to end, so
-                  &ldquo;take it out&rdquo; is only offered on Firelight for now.
-                </p>
-              )}
             </div>
           )}
 
